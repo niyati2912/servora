@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import AuthModal from './AuthModal';
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, BadgeCheck, BriefcaseBusiness,
   Check, ChevronDown, ChevronRight, Clock3, HeartHandshake, House, MapPin,
@@ -53,7 +54,7 @@ function SectionHeading({ eyebrow, title, accent, subtitle, align = 'center' }) 
   );
 }
 
-function Header({ onLocationClick, selectedCity }) {
+function Header({ onLocationClick, selectedCity, onAuthClick, currentUser, onLogout }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const items = [
     ['Services', '#services'], ['Service areas', '#cities'], ['How it works', '#how-it-works'], ['Find work', '#work']
@@ -70,6 +71,11 @@ function Header({ onLocationClick, selectedCity }) {
             <MapPin size={16} strokeWidth={2.2} /> <span>{selectedCity || 'Choose area'}</span><ChevronDown size={14} />
           </button>
           <button className="button button-pink button-small header-cta" onClick={() => scrollTo('services')}>Explore services <ArrowUpRight size={16} /></button>
+          {currentUser ? (
+            <button className="button button-small button-outline auth-header-button" onClick={onLogout}>Logout</button>
+          ) : (
+            <button className="button button-small button-outline auth-header-button" onClick={onAuthClick}>Login / Sign up</button>
+          )}
           <button className="mobile-menu-button" aria-label={mobileOpen ? 'Close menu' : 'Open menu'} onClick={() => setMobileOpen(v => !v)}>
             {mobileOpen ? <X size={23} /> : <Menu size={23} />}
           </button>
@@ -78,6 +84,11 @@ function Header({ onLocationClick, selectedCity }) {
       <AnimatePresence>
         {mobileOpen && <motion.div initial={{ opacity: 0, y: -7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -7 }} className="mobile-nav shell">
           {items.map(([label, href]) => <a key={label} href={href} onClick={() => setMobileOpen(false)}>{label}<ChevronRight size={16} /></a>)}
+          {!currentUser ? (
+            <button className="button button-outline w-full" onClick={() => { setMobileOpen(false); onAuthClick(); }}>Login / Sign up</button>
+          ) : (
+            <button className="button button-outline w-full" onClick={() => { setMobileOpen(false); onLogout(); }}>Logout</button>
+          )}
           <button className="button button-pink w-full" onClick={() => { setMobileOpen(false); scrollTo('services'); }}>Explore services <ArrowRight size={16} /></button>
         </motion.div>}
       </AnimatePresence>
@@ -193,6 +204,16 @@ function App() {
   const [toast, setToast] = useState('');
   const [openFaq, setOpenFaq] = useState(0);
   const [apiMessage, setApiMessage] = useState('');
+  const [authOpen, setAuthOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const savedUser = localStorage.getItem('sevoraUser');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
+  });
+
 
   useEffect(() => {
     let cancelled = false;
@@ -246,6 +267,27 @@ function App() {
     setToast(`${service.name} added to your shortlist${details.city ? ` for ${details.city}` : ''}.`);
   };
 
+  const handleLogin = (data) => {
+    const user = data?.user;
+    const token = data?.token;
+    if (!user || !token) {
+      setToast('Login response incomplete. Please try again.');
+      return;
+    }
+    localStorage.setItem('sevoraToken', token);
+    localStorage.setItem('sevoraUser', JSON.stringify(user));
+    setCurrentUser(user);
+    setAuthOpen(false);
+    setToast(`Welcome to Sevora, ${user.name || 'there'}!`);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('sevoraToken');
+    localStorage.removeItem('sevoraUser');
+    setCurrentUser(null);
+    setToast('You have logged out successfully.');
+  };
+
   const categoryIcon = (category) => {
     const name = (category || '').toLowerCase();
     if (name.includes('clean')) return Sparkles;
@@ -259,7 +301,13 @@ function App() {
 
   return (
     <div className="app-shell" id="home">
-      <Header selectedCity={selectedCity} onLocationClick={() => setCityPickerOpen(true)} />
+      <Header
+        selectedCity={selectedCity}
+        onLocationClick={() => setCityPickerOpen(true)}
+        onAuthClick={() => setAuthOpen(true)}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+      />
 
       <main>
         <section className="hero-section">
@@ -337,6 +385,7 @@ function App() {
 
       <footer className="site-footer"><div className="shell footer-main"><div className="footer-brand-col"><Brand light /><p>Local help for real life.<br />A little more room to be you.</p><div className="footer-socials"><a href="#home" aria-label="Sevora home">s.</a><a href="#work" aria-label="Sevora opportunities">in</a><a href="#faq" aria-label="Sevora questions">?</a></div></div><div className="footer-link-group"><h4>Discover</h4><a href="#services">Home services</a><a href="#cities">Areas & cities</a><a href="#how-it-works">How it works</a></div><div className="footer-link-group"><h4>Work with us</h4><a href="#work">Offer a service</a><a href="#work">Find local work</a><a href="#faq">Provider FAQs</a></div><div className="footer-note-box"><span className="footer-note-icon"><Navigation size={19} /></span><strong>Starting close to home.</strong><p>Built with local communities across Punjab, Chandigarh and Haryana in mind.</p><button onClick={() => setCityPickerOpen(true)}>Choose your area <ArrowUpRight size={15} /></button></div></div><div className="shell footer-bottom"><span>© {new Date().getFullYear()} Sevora. Made for everyday life.</span><span className="footer-build-note">React + Tailwind · Local marketplace preview</span><a href="#home">Back to top ↑</a></div></footer>
 
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onLogin={handleLogin} />
       <CityPicker open={cityPickerOpen} onClose={() => setCityPickerOpen(false)} selectedCity={selectedCity} onSelect={setSelectedCity} />
       <ServiceModal service={selectedService} onClose={() => setSelectedService(null)} selectedCity={selectedCity} onLocationClick={() => { setSelectedService(null); setCityPickerOpen(true); }} onShortlist={handleShortlist} />
       <Toast toast={toast} onClose={() => setToast('')} />
