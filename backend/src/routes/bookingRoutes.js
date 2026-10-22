@@ -1,4 +1,3 @@
-
 const express = require("express");
 
 const {
@@ -18,15 +17,12 @@ router.use(protect);
 
 router.post(
   "/",
-  protect,
   authorizeRoles("customer", "employer"),
   createBooking
 );
+
 router.get("/my", getMyBookings);
 
-router.patch(
-  "/:id/status",
-  updateBookingStatus
-);
+router.patch("/:id/status", updateBookingStatus);
 
-module.exports = router;
+module.exports = router;  

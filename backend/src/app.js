@@ -39,6 +39,7 @@ app.use("/api/applications", applicationRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
+app.use("/api/services", require("./routes/serviceRoutes"));
 
 // Authenticated user information
 app.get("/api/auth/me", protect, (req, res) => {

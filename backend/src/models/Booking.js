@@ -8,45 +8,69 @@ const bookingSchema = new mongoose.Schema(
       required: true,
       index: true
     },
+
     provider: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "ServiceProvider",
       required: true,
       index: true
     },
+
+    // Optional for backward compatibility with existing bookings.
+    service: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Service",
+      index: true
+    },
+
     bookingType: {
       type: String,
       enum: ["home_service", "driver"],
       required: true
     },
+
     scheduledAt: {
       type: Date,
       required: true
     },
+
+    durationMinutes: {
+      type: Number,
+      min: 15,
+      max: 1440,
+      default: 60
+    },
+
     address: {
       type: String,
       trim: true
     },
+
     serviceDescription: {
       type: String,
       trim: true
     },
+
     trip: {
       pickup: { type: String, trim: true },
       destination: { type: String, trim: true },
+
       tripType: {
         type: String,
         enum: ["one_way", "round_trip", "hourly"]
       },
+
       vehicleTransmission: {
         type: String,
         enum: ["manual", "automatic"]
       }
     },
+
     quotedPrice: {
       type: Number,
       min: 0
     },
+
     status: {
       type: String,
       enum: [
@@ -62,6 +86,7 @@ const bookingSchema = new mongoose.Schema(
       default: "pending",
       index: true
     },
+
     cancellationReason: {
       type: String,
       trim: true
@@ -70,6 +95,10 @@ const bookingSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-bookingSchema.index({ provider: 1, scheduledAt: 1, status: 1 });
+bookingSchema.index({
+  provider: 1,
+  scheduledAt: 1,
+  status: 1
+});
 
 module.exports = mongoose.model("Booking", bookingSchema);
