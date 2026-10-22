@@ -10,7 +10,7 @@ const businessRoutes = require("./routes/businessRoutes");
 const applicationRoutes = require("./routes/applicationRoutes");
 const reviewRoutes = require("./routes/reviewRoutes");
 const reportRoutes = require("./routes/reportRoutes");
-
+const serviceRequestRoutes = require("./routes/serviceRequestRoutes");
 const { protect, authorizeRoles } = require("./middleware/authMiddleware");
 
 const app = express();
@@ -38,6 +38,7 @@ app.use("/api/businesses", businessRoutes);
 app.use("/api/applications", applicationRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/service-requests", serviceRequestRoutes);
 
 // Authenticated user information
 app.get("/api/auth/me", protect, (req, res) => {

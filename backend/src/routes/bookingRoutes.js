@@ -18,10 +18,10 @@ router.use(protect);
 
 router.post(
   "/",
-  authorizeRoles("customer"),
+  protect,
+  authorizeRoles("customer", "employer"),
   createBooking
 );
-
 router.get("/my", getMyBookings);
 
 router.patch(

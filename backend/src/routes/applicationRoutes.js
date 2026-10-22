@@ -12,7 +12,12 @@ const router = express.Router();
 
 router.use(protect);
 
-router.post("/", authorizeRoles("customer"), applyForJob);
+router.post(
+  "/",
+  protect,
+  authorizeRoles("customer", "provider", "driver"),
+  applyForJob
+);
 router.get("/my", getMyApplications);
 router.get("/received", authorizeRoles("employer"), getApplicationsForMyJobs);
 router.patch("/:id/status", authorizeRoles("employer"), updateApplicationStatus);
