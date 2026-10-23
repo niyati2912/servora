@@ -154,37 +154,298 @@ function ServiceCard({ service, index, onExplore }) {
   );
 }
 
-function ServiceModal({ service, onClose, selectedCity, onLocationClick, onShortlist }) {
+
+function ServiceModal({
+  service,
+  onClose,
+  selectedCity,
+  onLocationClick,
+  onShortlist
+}) {
   const [duration, setDuration] = useState('2 hours');
   const [note, setNote] = useState('');
+  const [showBookingForm, setShowBookingForm] = useState(false);
+
+  const [bookingDate, setBookingDate] = useState('');
+  const [bookingTime, setBookingTime] = useState('');
+  const [address, setAddress] = useState('');
+  const [bookingMessage, setBookingMessage] = useState('');
+
   useEffect(() => {
     if (!service) return;
-    const onKey = (event) => event.key === 'Escape' && onClose();
+
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        if (showBookingForm) {
+          setShowBookingForm(false);
+        } else {
+          onClose();
+        }
+      }
+    };
+
     window.addEventListener('keydown', onKey);
+
     return () => window.removeEventListener('keydown', onKey);
-  }, [service, onClose]);
+  }, [service, onClose, showBookingForm]);
+
+  const price =
+    typeof service?.basePrice === 'number'
+      ? (
+          service.pricingType === 'hourly'
+            ? service.basePrice *
+              (
+                duration === '1 hour' ? 1 :
+                duration === '2 hours' ? 2 :
+                duration === '3 hours' ? 3 : 4
+              )
+            : service.basePrice
+        )
+      : null;
+
+  const today = new Date();
+  const minDate = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0')
+  ].join('-');
+
+  const handleConfirmBooking = (event) => {
+    event.preventDefault();
+
+    if (!bookingDate || !bookingTime || !address.trim()) {
+      setBookingMessage('Please fill in the date, time and address.');
+      return;
+    }
+
+    onShortlist(service, {
+      city: selectedCity,
+      duration,
+      note,
+      bookingDate,
+      bookingTime,
+      address: address.trim(),
+      price
+    });
+
+    setBookingMessage(
+      'Your booking details have been submitted!'
+    );
+
+    setShowBookingForm(false);
+  };
+
   return (
     <AnimatePresence>
-      {service && <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={e => e.target === e.currentTarget && onClose()}>
-        <motion.div className="service-modal" role="dialog" aria-modal="true" aria-labelledby="service-modal-title" initial={{ opacity: 0, y: 18, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18, scale: .98 }} transition={{ duration: .2 }}>
-          <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={19} /></button>
-          <div className="service-modal-image"><img src={getServiceImage(service)} alt="" /></div>
-          <div className="service-modal-content">
-            <span className="eyebrow"><span className="eyebrow-dot" /> SERVICE PREVIEW</span>
-            <h3 id="service-modal-title">{service.name}</h3>
-            <p className="modal-muted">{service.description}</p>
-            <div className="modal-detail-row"><span><MapPin size={16} /> Your area</span><button className="subtle-action" onClick={onLocationClick}>{selectedCity || 'Choose city'} <ChevronDown size={14} /></button></div>
-            <div className="modal-detail-row"><span><Clock3 size={16} /> Suggested duration</span><select value={duration} onChange={e => setDuration(e.target.value)}><option>1 hour</option><option>2 hours</option><option>3 hours</option><option>Half day</option></select></div>
-            <label className="modal-note-label">Anything we should know? <span>Optional</span><textarea rows="3" value={note} onChange={e => setNote(e.target.value)} placeholder="Tell us a little about what you need…" /></label>
-            <div className="modal-price-row"><span>Indicative price</span><strong>{typeof service.basePrice === 'number' ? `₹${(service.pricingType === 'hourly' ? service.basePrice * (duration === '1 hour' ? 1 : duration === '2 hours' ? 2 : duration === '3 hours' ? 3 : 4) : service.basePrice).toLocaleString('en-IN')}` : 'Quote required'}</strong></div>
-            <button className="button button-pink button-full" onClick={() => { onShortlist(service, { city: selectedCity, duration, note }); onClose(); }}>Add to my shortlist <ArrowRight size={17} /></button>
-            <p className="tiny-disclaimer">Preview only: a confirmed booking requires the authenticated provider-selection flow.</p>
-          </div>
+      {service && (
+        <motion.div
+          className="modal-backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onMouseDown={(e) =>
+            e.target === e.currentTarget && onClose()
+          }
+        >
+          <motion.div
+            className="service-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="service-modal-title"
+            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+            transition={{ duration: 0.2 }}
+          >
+            <button
+              className="icon-button modal-close"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <X size={19} />
+            </button>
+
+            <div className="service-modal-image">
+              <img src={getServiceImage(service)} alt="" />
+            </div>
+
+            <div className="service-modal-content">
+              <span className="eyebrow">
+                <span className="eyebrow-dot" />
+                {showBookingForm ? 'BOOK YOUR SERVICE' : 'SERVICE PREVIEW'}
+              </span>
+
+              <h3 id="service-modal-title">
+                {showBookingForm ? 'Complete Your Booking' : service.name}
+              </h3>
+
+              <p className="modal-muted">
+                {showBookingForm
+                  ? `Schedule your ${service.name} service.`
+                  : service.description}
+              </p>
+
+              {!showBookingForm ? (
+                <>
+                  <div className="modal-detail-row">
+                    <span><MapPin size={16} /> Your area</span>
+                    <button
+                      className="subtle-action"
+                      onClick={onLocationClick}
+                    >
+                      {selectedCity || 'Choose city'}
+                      <ChevronDown size={14} />
+                    </button>
+                  </div>
+
+                  <div className="modal-detail-row">
+                    <span><Clock3 size={16} /> Suggested duration</span>
+                    <select
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                    >
+                      <option>1 hour</option>
+                      <option>2 hours</option>
+                      <option>3 hours</option>
+                      <option>Half day</option>
+                    </select>
+                  </div>
+
+                  <label className="modal-note-label">
+                    Anything we should know?
+                    <span>Optional</span>
+                    <textarea
+                      rows="3"
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="Tell us a little about what you need..."
+                    />
+                  </label>
+
+                  <div className="modal-price-row">
+                    <span>Indicative price</span>
+                    <strong>
+                      {price !== null
+                        ? `₹${price.toLocaleString('en-IN')}`
+                        : 'Quote required'}
+                    </strong>
+                  </div>
+
+                  <button
+                    className="button button-pink button-full"
+                    onClick={() => {
+                      setBookingMessage('');
+                      setShowBookingForm(true);
+                    }}
+                  >
+                    Book Now <ArrowRight size={17} />
+                  </button>
+                </>
+              ) : (
+                <form onSubmit={handleConfirmBooking}>
+                  <div className="modal-detail-row">
+                    <span><MapPin size={16} /> City</span>
+                    <strong>{selectedCity || 'Not selected'}</strong>
+                  </div>
+
+                  <div className="modal-detail-row">
+                    <span><Clock3 size={16} /> Duration</span>
+                    <strong>{duration}</strong>
+                  </div>
+
+                  <div className="modal-note-label">
+                    <label htmlFor="booking-date">Select date</label>
+                    <input
+                      id="booking-date"
+                      type="date"
+                      min={minDate}
+                      value={bookingDate}
+                      onChange={(e) => setBookingDate(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="modal-note-label">
+                    <label htmlFor="booking-time">Select time</label>
+                    <select
+                      id="booking-time"
+                      value={bookingTime}
+                      onChange={(e) => setBookingTime(e.target.value)}
+                      required
+                    >
+                      <option value="">Choose a time slot</option>
+                      <option value="09:00">9:00 AM</option>
+                      <option value="10:00">10:00 AM</option>
+                      <option value="11:00">11:00 AM</option>
+                      <option value="12:00">12:00 PM</option>
+                      <option value="14:00">2:00 PM</option>
+                      <option value="15:00">3:00 PM</option>
+                      <option value="16:00">4:00 PM</option>
+                      <option value="17:00">5:00 PM</option>
+                    </select>
+                  </div>
+
+                  <div className="modal-note-label">
+                    <label htmlFor="booking-address">Full service address</label>
+                    <textarea
+                      id="booking-address"
+                      rows="3"
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                      placeholder="House number, street, area and PIN code"
+                      required
+                    />
+                  </div>
+
+                  <div className="modal-price-row">
+                    <span>Indicative price</span>
+                    <strong>
+                      {price !== null
+                        ? `₹${price.toLocaleString('en-IN')}`
+                        : 'Quote required'}
+                    </strong>
+                  </div>
+
+                  {bookingMessage && (
+                    <p role="alert" className="tiny-disclaimer">
+                      {bookingMessage}
+                    </p>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="button button-pink button-full"
+                  >
+                    Confirm Booking <ArrowRight size={17} />
+                  </button>
+
+                  <button
+                    type="button"
+                    className="button button-full"
+                    onClick={() => {
+                      setShowBookingForm(false);
+                      setBookingMessage('');
+                    }}
+                  >
+                    Back to Service Details
+                  </button>
+                </form>
+              )}
+
+              {!showBookingForm && (
+                <p className="tiny-disclaimer">
+                  Prices are indicative. Provider availability and final
+                  booking confirmation may require backend integration.
+                </p>
+              )}
+            </div>
+          </motion.div>
         </motion.div>
-      </motion.div>}
+      )}
     </AnimatePresence>
   );
 }
+
 
 function Toast({ toast, onClose }) {
   return <AnimatePresence>{toast && <motion.div className="toast-message" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 14 }}><CheckCircle2 size={19} /><span>{toast}</span><button onClick={onClose} aria-label="Dismiss notification"><X size={16} /></button></motion.div>}</AnimatePresence>;
