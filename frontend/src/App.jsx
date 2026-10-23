@@ -6,10 +6,11 @@ import {
   Check, ChevronDown, ChevronRight, Clock3, HeartHandshake, House, MapPin,
   Menu, Search, ShieldCheck, Sparkles, Star, Wrench, X, Zap, CookingPot,
   CarFront, CalendarDays, HandHeart, UsersRound, MessageCircle, CircleHelp,
-  Leaf, Hammer, Building2, Navigation, CheckCircle2
+  Leaf, Hammer, Building2, Navigation, CheckCircle2, Phone
 } from 'lucide-react';
 import { cities, fallbackServices, faqItems, servicePhotos } from './data';
 import CityIllustration from "./CityIllustration";
+import DriverOnboarding from "./DriverOnboarding";
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
@@ -55,7 +56,7 @@ function SectionHeading({ eyebrow, title, accent, subtitle, align = 'center' }) 
   );
 }
 
-function Header({ onLocationClick, selectedCity, onAuthClick, currentUser, onLogout }) {
+function Header({ onLocationClick, selectedCity, onAuthClick, currentUser, onLogout, onBookingsClick }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const items = [
     ['Services', '#services'], ['Service areas', '#cities'], ['How it works', '#how-it-works'], ['Find work', '#work']
@@ -72,6 +73,9 @@ function Header({ onLocationClick, selectedCity, onAuthClick, currentUser, onLog
             <MapPin size={16} strokeWidth={2.2} /> <span>{selectedCity || 'Choose area'}</span><ChevronDown size={14} />
           </button>
           <button className="button button-pink button-small header-cta" onClick={() => scrollTo('services')}>Explore services <ArrowUpRight size={16} /></button>
+          {currentUser && (
+            <button className="button button-small button-outline auth-header-button" onClick={onBookingsClick}>My bookings</button>
+          )}
           {currentUser ? (
             <button className="button button-small button-outline auth-header-button" onClick={onLogout}>Logout</button>
           ) : (
@@ -156,288 +160,273 @@ function ServiceCard({ service, index, onExplore }) {
 }
 
 
+function localDateKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function firstUsefulDate() {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  return localDateKey(date);
+}
+
+const BOOKING_SLOTS = [
+  { value: '09:00', label: '9:00 AM' },
+  { value: '10:30', label: '10:30 AM' },
+  { value: '12:00', label: '12:00 PM' },
+  { value: '14:00', label: '2:00 PM' },
+  { value: '15:30', label: '3:30 PM' },
+  { value: '17:00', label: '5:00 PM' },
+  { value: '18:30', label: '6:30 PM' }
+];
+
 function ServiceModal({
   service,
   onClose,
   selectedCity,
   onLocationClick,
-  onShortlist
+  currentUser,
+  onNeedLogin,
+  onBooked
 }) {
-  const [duration, setDuration] = useState('2 hours');
+  const [durationMinutes, setDurationMinutes] = useState(60);
   const [note, setNote] = useState('');
   const [showBookingForm, setShowBookingForm] = useState(false);
-
-  const [bookingDate, setBookingDate] = useState('');
-  const [bookingTime, setBookingTime] = useState('');
-  const [address, setAddress] = useState('');
+  const [bookingDate, setBookingDate] = useState(firstUsefulDate);
+  const [bookingTime, setBookingTime] = useState('10:30');
+  const [address, setAddress] = useState(currentUser?.address || '');
+  const [pickup, setPickup] = useState(currentUser?.address || '');
+  const [destination, setDestination] = useState('');
+  const [tripType, setTripType] = useState(service?.tripType || 'one_way');
+  const [phone, setPhone] = useState(currentUser?.phone || '');
   const [bookingMessage, setBookingMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!service) return;
+    // Reset appointment-specific fields only when the selected service changes.
+    // Logging in while this modal is open must not reset the user's date/time choices.
+    setDurationMinutes(Number(service.estimatedDurationMinutes) || 60);
+    setNote('');
+    setShowBookingForm(false);
+    setBookingDate(firstUsefulDate());
+    setBookingTime('10:30');
+    setAddress(currentUser?.address || '');
+    setPickup(currentUser?.address || '');
+    setDestination('');
+    setTripType(service?.tripType || 'one_way');
+    setPhone(currentUser?.phone || '');
+    setBookingMessage('');
+    setSubmitting(false);
+  }, [service?._id, service?.slug]);
 
+  useEffect(() => {
+    // If the customer logs in from this modal, fill missing contact fields
+    // without overwriting anything they have already typed.
+    if (!currentUser) return;
+    if (currentUser.address) {
+      setAddress((previous) => previous.trim() ? previous : currentUser.address);
+      setPickup((previous) => previous.trim() ? previous : currentUser.address);
+    }
+    if (currentUser.phone) {
+      setPhone((previous) => previous.trim() ? previous : currentUser.phone);
+    }
+  }, [currentUser?.address, currentUser?.phone]);
+
+  useEffect(() => {
+    if (!service) return undefined;
     const onKey = (event) => {
-      if (event.key === 'Escape') {
-        if (showBookingForm) {
-          setShowBookingForm(false);
-        } else {
-          onClose();
-        }
+      if (event.key === 'Escape' && !submitting) {
+        if (showBookingForm) setShowBookingForm(false);
+        else onClose();
       }
     };
-
     window.addEventListener('keydown', onKey);
-
     return () => window.removeEventListener('keydown', onKey);
-  }, [service, onClose, showBookingForm]);
+  }, [service, onClose, showBookingForm, submitting]);
 
-  const price =
-    typeof service?.basePrice === 'number'
-      ? (
-          service.pricingType === 'hourly'
-            ? service.basePrice *
-              (
-                duration === '1 hour' ? 1 :
-                duration === '2 hours' ? 2 :
-                duration === '3 hours' ? 3 : 4
-              )
-            : service.basePrice
-        )
-      : null;
+  const dateOptions = useMemo(() => Array.from({ length: 7 }, (_, offset) => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() + offset);
+    return {
+      key: localDateKey(date),
+      day: offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow' : date.toLocaleDateString('en-IN', { weekday: 'short' }),
+      date: date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+    };
+  }), []);
 
-  const today = new Date();
-  const minDate = [
-    today.getFullYear(),
-    String(today.getMonth() + 1).padStart(2, '0'),
-    String(today.getDate()).padStart(2, '0')
-  ].join('-');
+  const allowedSlots = BOOKING_SLOTS.filter((slot) => {
+    if (bookingDate !== localDateKey(new Date())) return true;
+    const [hours, minutes] = slot.value.split(':').map(Number);
+    const slotDate = new Date();
+    slotDate.setHours(hours, minutes, 0, 0);
+    return slotDate.getTime() > Date.now() + 30 * 60 * 1000;
+  });
 
-  const handleConfirmBooking = (event) => {
+  useEffect(() => {
+    if (!allowedSlots.some((slot) => slot.value === bookingTime)) {
+      setBookingTime(allowedSlots[0]?.value || '');
+    }
+  }, [bookingDate, bookingTime, allowedSlots]);
+
+  const price = typeof service?.basePrice === 'number'
+    ? (service.pricingType === 'hourly'
+      ? service.basePrice * Math.ceil(durationMinutes / 60)
+      : service.basePrice)
+    : null;
+
+  const createBooking = async (event) => {
     event.preventDefault();
+    setBookingMessage('');
 
-    if (!bookingDate || !bookingTime || !address.trim()) {
-      setBookingMessage('Please fill in the date, time and address.');
+    const token = localStorage.getItem('sevoraToken');
+    if (!token) {
+      onNeedLogin();
       return;
     }
 
-    onShortlist(service, {
+    if (!bookingDate || !bookingTime) {
+      setBookingMessage('Choose a date and an available time slot.');
+      return;
+    }
+    const isDriver = service.providerType === 'driver';
+    if (!isDriver && !address.trim()) {
+      setBookingMessage('Add your service address. You can save it in your profile during sign-up.');
+      return;
+    }
+    if (isDriver && (!pickup.trim() || !destination.trim())) {
+      setBookingMessage('Enter a pickup and destination for the driver.');
+      return;
+    }
+    if (!phone.trim()) {
+      setBookingMessage('Add a contact number so the professional can reach you.');
+      return;
+    }
+
+    const [year, month, day] = bookingDate.split('-').map(Number);
+    const [hours, minutes] = bookingTime.split(':').map(Number);
+    const scheduledAt = new Date(year, month - 1, day, hours, minutes, 0, 0);
+    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) {
+      setBookingMessage('That time has passed. Please choose a future slot.');
+      return;
+    }
+
+    const providerType = service.providerType === 'driver' ? 'driver' : 'home_service';
+    const payload = {
+      bookingType: providerType,
+      serviceSlug: service.slug,
+      ...( /^[a-f\d]{24}$/i.test(String(service._id || '')) ? { serviceId: service._id } : {}),
+      scheduledAt: scheduledAt.toISOString(),
+      durationMinutes: Number(durationMinutes),
       city: selectedCity,
-      duration,
-      note,
-      bookingDate,
-      bookingTime,
-      address: address.trim(),
-      price
-    });
+      ...(isDriver ? { address: pickup.trim() } : { address: address.trim() }),
+      customerPhone: phone.trim(),
+      serviceDescription: service.name,
+      note: note.trim()
+    };
 
-    setBookingMessage(
-      'Your booking details have been submitted!'
-    );
+    if (providerType === 'driver') {
+      payload.trip = {
+        pickup: pickup.trim(),
+        destination: destination.trim(),
+        tripType: service.tripType || tripType
+      };
+    }
 
-    setShowBookingForm(false);
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE}/bookings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || `Booking failed (${response.status}).`);
+      if (!data.booking?._id) throw new Error('The server did not confirm that a booking record was saved.');
+      onBooked(data.booking);
+    } catch (error) {
+      setBookingMessage(error.message || 'Booking failed. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <AnimatePresence>
       {service && (
-        <motion.div
-          className="modal-backdrop"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onMouseDown={(e) =>
-            e.target === e.currentTarget && onClose()
-          }
-        >
-          <motion.div
-            className="service-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="service-modal-title"
-            initial={{ opacity: 0, y: 18, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 18, scale: 0.98 }}
-            transition={{ duration: 0.2 }}
-          >
-            <button
-              className="icon-button modal-close"
-              onClick={onClose}
-              aria-label="Close"
-            >
-              <X size={19} />
-            </button>
-
-            <div className="service-modal-image">
-              <img src={getServiceImage(service)} alt="" />
-            </div>
-
+        <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && !submitting && onClose()}>
+          <motion.div className="service-modal" role="dialog" aria-modal="true" aria-labelledby="service-modal-title" initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18, scale: 0.98 }} transition={{ duration: 0.2 }}>
+            <button className="icon-button modal-close" onClick={onClose} aria-label="Close" disabled={submitting}><X size={19} /></button>
+            <div className="service-modal-image"><img src={getServiceImage(service)} alt={service.name} /></div>
             <div className="service-modal-content">
-              <span className="eyebrow">
-                <span className="eyebrow-dot" />
-                {showBookingForm ? 'BOOK YOUR SERVICE' : 'SERVICE PREVIEW'}
-              </span>
-
-              <h3 id="service-modal-title">
-                {showBookingForm ? 'Complete Your Booking' : service.name}
-              </h3>
-
-              <p className="modal-muted">
-                {showBookingForm
-                  ? `Schedule your ${service.name} service.`
-                  : service.description}
-              </p>
-
+              <span className="eyebrow"><span className="eyebrow-dot" />{showBookingForm ? 'BOOK YOUR SERVICE' : 'YOUR LOCAL SERVICE'}</span>
+              <h3 id="service-modal-title">{showBookingForm ? `Book ${service.name}` : service.name}</h3>
+              <p className="modal-muted">{service.description}</p>
               {!showBookingForm ? (
                 <>
-                  <div className="modal-detail-row">
-                    <span><MapPin size={16} /> Your area</span>
-                    <button
-                      className="subtle-action"
-                      onClick={onLocationClick}
-                    >
-                      {selectedCity || 'Choose city'}
-                      <ChevronDown size={14} />
-                    </button>
-                  </div>
-
-                  <div className="modal-detail-row">
-                    <span><Clock3 size={16} /> Suggested duration</span>
-                    <select
-                      value={duration}
-                      onChange={(e) => setDuration(e.target.value)}
-                    >
-                      <option>1 hour</option>
-                      <option>2 hours</option>
-                      <option>3 hours</option>
-                      <option>Half day</option>
-                    </select>
-                  </div>
-
-                  <label className="modal-note-label">
-                    Anything we should know?
-                    <span>Optional</span>
-                    <textarea
-                      rows="3"
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      placeholder="Tell us a little about what you need..."
-                    />
-                  </label>
-
-                  <div className="modal-price-row">
-                    <span>Indicative price</span>
-                    <strong>
-                      {price !== null
-                        ? `₹${price.toLocaleString('en-IN')}`
-                        : 'Quote required'}
-                    </strong>
-                  </div>
-
-                  <button
-                    className="button button-pink button-full"
-                    onClick={() => {
-                      setBookingMessage('');
-                      setShowBookingForm(true);
-                    }}
-                  >
-                    Book Now <ArrowRight size={17} />
-                  </button>
+                  <div className="modal-detail-row"><span><MapPin size={16} /> Your area</span><button className="subtle-action" onClick={onLocationClick}>{selectedCity || 'Choose city'} <ChevronDown size={14} /></button></div>
+                  <div className="modal-detail-row"><span><Clock3 size={16} /> Typical duration</span><strong>{Math.round((Number(service.estimatedDurationMinutes) || 60) / 60 * 10) / 10} hr</strong></div>
+                  <div className="modal-price-row"><span>{service.pricingType === 'quote' ? 'Final price after assessment' : 'Estimated price'}</span><strong>{price !== null ? `₹${price.toLocaleString('en-IN')}` : 'Quote required'}</strong></div>
+                  <p className="tiny-disclaimer">Sevora will match your service to an available professional in {selectedCity}. You do not need to choose a plumber or provider manually.</p>
+                  <button className="button button-pink button-full" onClick={() => setShowBookingForm(true)}>Choose appointment <ArrowRight size={17} /></button>
                 </>
               ) : (
-                <form onSubmit={handleConfirmBooking}>
-                  <div className="modal-detail-row">
-                    <span><MapPin size={16} /> City</span>
-                    <strong>{selectedCity || 'Not selected'}</strong>
+                <form className="booking-form" onSubmit={createBooking}>
+                  <div className="booking-context-row"><span><MapPin size={15} />{selectedCity}</span><span><ShieldCheck size={15} />Auto-matched professional</span></div>
+                  <label className="modal-note-label">Choose a day</label>
+                  <div className="booking-date-grid">
+                    {dateOptions.map((date) => <button type="button" key={date.key} className={`booking-date-option ${bookingDate === date.key ? 'active' : ''}`} onClick={() => setBookingDate(date.key)}><span>{date.day}</span><strong>{date.date}</strong></button>)}
                   </div>
-
-                  <div className="modal-detail-row">
-                    <span><Clock3 size={16} /> Duration</span>
-                    <strong>{duration}</strong>
+                  <label className="modal-note-label">Available time</label>
+                  <div className="booking-slot-grid">
+                    {allowedSlots.map((slot) => <button type="button" key={slot.value} className={`booking-slot ${bookingTime === slot.value ? 'active' : ''}`} onClick={() => setBookingTime(slot.value)}>{slot.label}</button>)}
+                    {!allowedSlots.length && <p className="empty-state">No time slots left today. Choose another date.</p>}
                   </div>
-
-                  <div className="modal-note-label">
-                    <label htmlFor="booking-date">Select date</label>
-                    <input
-                      id="booking-date"
-                      type="date"
-                      min={minDate}
-                      value={bookingDate}
-                      onChange={(e) => setBookingDate(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <div className="modal-note-label">
-                    <label htmlFor="booking-time">Select time</label>
-                    <select
-                      id="booking-time"
-                      value={bookingTime}
-                      onChange={(e) => setBookingTime(e.target.value)}
-                      required
-                    >
-                      <option value="">Choose a time slot</option>
-                      <option value="09:00">9:00 AM</option>
-                      <option value="10:00">10:00 AM</option>
-                      <option value="11:00">11:00 AM</option>
-                      <option value="12:00">12:00 PM</option>
-                      <option value="14:00">2:00 PM</option>
-                      <option value="15:00">3:00 PM</option>
-                      <option value="16:00">4:00 PM</option>
-                      <option value="17:00">5:00 PM</option>
+                  <label className="booking-field">How long do you need help?
+                    <select value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))}>
+                      <option value={60}>1 hour</option><option value={90}>1.5 hours</option><option value={120}>2 hours</option><option value={180}>3 hours</option><option value={240}>4 hours</option>
                     </select>
-                  </div>
-
-                  <div className="modal-note-label">
-                    <label htmlFor="booking-address">Full service address</label>
-                    <textarea
-                      id="booking-address"
-                      rows="3"
-                      value={address}
-                      onChange={(e) => setAddress(e.target.value)}
-                      placeholder="House number, street, area and PIN code"
-                      required
-                    />
-                  </div>
-
-                  <div className="modal-price-row">
-                    <span>Indicative price</span>
-                    <strong>
-                      {price !== null
-                        ? `₹${price.toLocaleString('en-IN')}`
-                        : 'Quote required'}
-                    </strong>
-                  </div>
-
-                  {bookingMessage && (
-                    <p role="alert" className="tiny-disclaimer">
-                      {bookingMessage}
-                    </p>
+                  </label>
+                  {service.providerType === 'driver' ? (
+                    <>
+                      <label className="booking-field">Pickup location
+                        <textarea rows="2" value={pickup} onChange={(event) => setPickup(event.target.value)} placeholder="Your pickup location" autoComplete="street-address" required />
+                      </label>
+                      <label className="booking-field">Destination
+                        <input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Where should the driver take you?" required />
+                      </label>
+                      {!service.tripType && <label className="booking-field">Trip type
+                        <select value={tripType} onChange={(event) => setTripType(event.target.value)}><option value="one_way">One way</option><option value="round_trip">Round trip</option><option value="hourly">Hourly</option></select>
+                      </label>}
+                    </>
+                  ) : (
+                    <label className="booking-field">Service address
+                      <textarea rows="2" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Your saved address" autoComplete="street-address" required />
+                    </label>
                   )}
-
-                  <button
-                    type="submit"
-                    className="button button-pink button-full"
-                  >
-                    Confirm Booking <ArrowRight size={17} />
-                  </button>
-
-                  <button
-                    type="button"
-                    className="button button-full"
-                    onClick={() => {
-                      setShowBookingForm(false);
-                      setBookingMessage('');
-                    }}
-                  >
-                    Back to Service Details
-                  </button>
+                  <label className="booking-field">Contact number
+                    <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} autoComplete="tel" placeholder="Phone number" required />
+                    <small className="booking-help">Shared with your matched professional for this appointment.</small>
+                  </label>
+                  <label className="booking-field">Anything we should know? <span className="optional-label">Optional</span>
+                    <textarea rows="2" value={note} onChange={(event) => setNote(event.target.value)} placeholder="A quick note about the task…" />
+                  </label>
+                  <div className="modal-price-row"><span>{service.pricingType === 'quote' ? 'Final price after assessment' : 'Estimated price'}</span><strong>{price !== null ? `₹${price.toLocaleString('en-IN')}` : 'Quote required'}</strong></div>
+                  {bookingMessage && <p className="booking-error" role="alert">{bookingMessage}</p>}
+                  <button type="submit" className="button button-pink button-full" disabled={submitting || !allowedSlots.length}>
+  {submitting ? 'Finding a professional…' : 'Confirm appointment'}
+  <ArrowRight size={17} />
+</button>
+                  <button type="button" className="button button-outline button-full" disabled={submitting} onClick={() => setShowBookingForm(false)}>Back</button>
+                  <p className="tiny-disclaimer">Your appointment is saved to your Sevora account. The professional’s contact details will appear in My Bookings.</p>
                 </form>
-              )}
-
-              {!showBookingForm && (
-                <p className="tiny-disclaimer">
-                  Prices are indicative. Provider availability and final
-                  booking confirmation may require backend integration.
-                </p>
               )}
             </div>
           </motion.div>
@@ -447,14 +436,132 @@ function ServiceModal({
   );
 }
 
+function BookingHistoryModal({ open, onClose, refreshKey }) {
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!open) return undefined;
+    const controller = new AbortController();
+    async function load() {
+      setLoading(true);
+      setError('');
+      try {
+        const token = localStorage.getItem('sevoraToken');
+        if (!token) throw new Error('Log in to view your appointments.');
+        const response = await fetch(`${API_BASE}/bookings/my`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || 'Could not load bookings.');
+        if (!controller.signal.aborted) setBookings(data.bookings || []);
+      } catch (err) {
+        if (err.name !== 'AbortError' && !controller.signal.aborted) setError(err.message || 'Could not load bookings.');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+    load();
+    return () => controller.abort();
+  }, [open, refreshKey]);
+  return (
+    <AnimatePresence>
+      {open && <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+        <motion.section className="bookings-modal" role="dialog" aria-modal="true" aria-labelledby="bookings-title" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}>
+          <button className="icon-button modal-close" onClick={onClose} aria-label="Close bookings"><X size={19} /></button>
+          <p className="eyebrow"><span className="eyebrow-dot" />YOUR SEVORA ACCOUNT</p><h3 id="bookings-title">My bookings<span>.</span></h3><p className="modal-muted">Real appointments saved to the database.</p>
+          {loading && <p className="booking-help">Loading your appointments…</p>}{error && <p className="booking-error" role="alert">{error}</p>}
+          {!loading && !error && bookings.length === 0 && <div className="bookings-empty"><CalendarDays size={28} /><strong>No bookings yet</strong><p>Your appointments will appear here after you book a service.</p></div>}
+          <div className="my-bookings-list">{bookings.map((booking) => {
+            const providerName = booking.provider?.user?.name || 'Matched professional';
+            const providerPhone = booking.providerPhone || booking.provider?.user?.phone || '';
+            const customerPhone = booking.customerPhone || booking.customer?.phone || '';
+            return <article className="my-booking-row" key={booking._id}>
+              <div className="my-booking-icon">{booking.bookingType === 'driver' ? <CarFront size={20} /> : <House size={20} />}</div>
+              <div className="my-booking-info"><strong>{booking.service?.name || booking.serviceDescription || 'Sevora service'}</strong><span>{booking.scheduledAt ? new Date(booking.scheduledAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'Time not specified'} · {booking.city || booking.address || 'Local service'}</span><small>Professional: {providerName}</small>{providerPhone && <small><Phone size={12} /> Professional: <a href={`tel:${providerPhone}`}>{providerPhone}</a></small>}{customerPhone && <small><Phone size={12} /> Customer contact: <a href={`tel:${customerPhone}`}>{customerPhone}</a></small>}{booking._id && <small className="my-booking-id">Booking ID: {booking._id}</small>}</div>
+              <div className="my-booking-right"><span className={`booking-status status-${booking.status}`}>{String(booking.status || 'pending').replaceAll('_', ' ')}</span>{typeof booking.quotedPrice === 'number' && <strong>₹{booking.quotedPrice.toLocaleString('en-IN')}</strong>}</div>
+            </article>;
+          })}</div>
+        </motion.section>
+      </motion.div>}
+    </AnimatePresence>
+  );
+}
+
+function WorkModal({ open, onClose, selectedCity, currentUser, onNeedLogin, onToast }) {
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [coverLetters, setCoverLetters] = useState({});
+  const [applyingId, setApplyingId] = useState('');
+  const [appliedIds, setAppliedIds] = useState([]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const controller = new AbortController();
+    async function loadJobs() {
+      setLoading(true); setError('');
+      try {
+        const params = new URLSearchParams({ locality: selectedCity || 'Rajpura', limit: '30' });
+        const response = await fetch(`${API_BASE}/jobs?${params.toString()}`, { signal: controller.signal });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || 'Could not load local jobs.');
+        if (!controller.signal.aborted) setJobs(data.jobs || []);
+      } catch (err) {
+        if (err.name !== 'AbortError' && !controller.signal.aborted) setError(err.message || 'Could not load jobs.');
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    }
+    loadJobs();
+    return () => controller.abort();
+  }, [open, selectedCity]);
+
+  const applyToJob = async (job) => {
+    const token = localStorage.getItem('sevoraToken');
+    if (!token) { onNeedLogin(); return; }
+    const roles = currentUser?.roles || [];
+    if (!roles.some((role) => ['customer', 'provider', 'driver'].includes(role))) {
+      setError('This account is set up as an employer. Use a job-seeker or customer account to apply.');
+      return;
+    }
+    setApplyingId(job._id); setError('');
+    try {
+      const response = await fetch(`${API_BASE}/applications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jobId: job._id, coverLetter: (coverLetters[job._id] || '').trim() })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Application could not be submitted.');
+      setAppliedIds((ids) => [...new Set([...ids, job._id])]);
+      onToast('Application submitted successfully.');
+    } catch (err) { setError(err.message || 'Application failed.'); }
+    finally { setApplyingId(''); }
+  };
+
+  return <AnimatePresence>{open && <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <motion.section className="bookings-modal work-modal" role="dialog" aria-modal="true" aria-labelledby="work-modal-title" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}>
+      <button className="icon-button modal-close" onClick={onClose} aria-label="Close job opportunities"><X size={19} /></button><p className="eyebrow"><span className="eyebrow-dot" />WORK CLOSE TO HOME</p><h3 id="work-modal-title">Local opportunities<span>.</span></h3><p className="modal-muted">Open jobs around {selectedCity}. Contact details are shown when the employer has provided a number.</p>
+      {loading && <p className="booking-help">Finding local jobs…</p>}{error && <p role="alert" className="booking-error">{error}</p>}
+      {!loading && !error && jobs.length === 0 && <div className="bookings-empty"><BriefcaseBusiness size={28} /><strong>No open jobs found for {selectedCity}</strong><p>Try another nearby area using the city picker.</p></div>}
+      <div className="jobs-list">{jobs.map((job) => <article className="job-card" key={job._id}>
+        <div className="job-card-top"><div><span className="job-category-pill">{job.category || 'Local work'}</span><h4>{job.title}</h4><p>{job.business?.name || 'Local employer'} · {job.locality}</p></div><span className="job-type-pill">{String(job.employmentType || '').replaceAll('_', ' ')}</span></div>
+        <p className="job-description">{job.description}</p>
+        <div className="job-pay">{job.salaryMin != null || job.salaryMax != null ? `₹${Number(job.salaryMin || 0).toLocaleString('en-IN')} – ₹${Number(job.salaryMax || 0).toLocaleString('en-IN')} / month` : 'Salary discussed with employer'}</div>
+        <div className="job-contact-row"><span><UsersRound size={14} /> {job.postedBy?.name || 'Employer'}</span>{job.postedBy?.phone ? <a href={`tel:${job.postedBy.phone}`}><Phone size={14} /> {job.postedBy.phone}</a> : <span className="booking-help">Contact number not provided</span>}</div>
+        <label className="booking-field">Message to employer <span className="optional-label">Optional</span><textarea rows="2" value={coverLetters[job._id] || ''} onChange={(event) => setCoverLetters((items) => ({ ...items, [job._id]: event.target.value }))} placeholder="Briefly tell them why you're interested…" /></label>
+        <button className="button button-pink button-full" disabled={applyingId === job._id || appliedIds.includes(job._id)} onClick={() => applyToJob(job)}>{appliedIds.includes(job._id) ? 'Application sent' : applyingId === job._id ? 'Applying…' : 'Apply for this job'} {appliedIds.includes(job._id) ? <CheckCircle2 size={17} /> : <ArrowRight size={17} />}</button>
+      </article>)}</div>
+    </motion.section>
+  </motion.div>}</AnimatePresence>;
+}
 
 function Toast({ toast, onClose }) {
   return <AnimatePresence>{toast && <motion.div className="toast-message" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 14 }}><CheckCircle2 size={19} /><span>{toast}</span><button onClick={onClose} aria-label="Dismiss notification"><X size={16} /></button></motion.div>}</AnimatePresence>;
 }
 
 function App() {
-  const [selectedCity, setSelectedCity] = useState('Rajpura');
+  const [selectedCity, setSelectedCity] = useState(() => localStorage.getItem('sevoraCity') || 'Rajpura');
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
+  const [bookingsOpen, setBookingsOpen] = useState(false);
+  const [bookingsRefreshKey, setBookingsRefreshKey] = useState(0);
+  const [workOpen, setWorkOpen] = useState(false);
   const [services, setServices] = useState(fallbackServices);
   const [source, setSource] = useState('demo');
   const [activeCategory, setActiveCategory] = useState('All');
@@ -462,7 +569,6 @@ function App() {
   const [citySearch, setCitySearch] = useState('');
   const [showAllCities, setShowAllCities] = useState(false);
   const [selectedService, setSelectedService] = useState(null);
-  const [shortlist, setShortlist] = useState([]);
   const [toast, setToast] = useState('');
   const [openFaq, setOpenFaq] = useState(0);
   const [apiMessage, setApiMessage] = useState('');
@@ -524,9 +630,24 @@ function App() {
   const filteredCities = useMemo(() => cities.filter(city => `${city.name} ${city.region}`.toLowerCase().includes(citySearch.toLowerCase())), [citySearch]);
   const visibleCities = showAllCities || citySearch ? filteredCities : filteredCities.slice(0, 9);
 
-  const handleShortlist = (service, details) => {
-    setShortlist(current => current.some(item => item.service._id === service._id) ? current : [...current, { service, details }]);
-    setToast(`${service.name} added to your shortlist${details.city ? ` for ${details.city}` : ''}.`);
+  const handleSelectCity = (cityName, shouldScroll = false) => {
+    setSelectedCity(cityName);
+    localStorage.setItem('sevoraCity', cityName);
+    setCurrentUser((previous) => {
+      if (!previous) return previous;
+      const updated = { ...previous, city: cityName };
+      localStorage.setItem('sevoraUser', JSON.stringify(updated));
+      return updated;
+    });
+    setToast(`Your area is now ${cityName}.`);
+    if (shouldScroll) window.setTimeout(() => scrollTo('services'), 80);
+  };
+
+  const handleBookingCreated = (booking) => {
+    setSelectedService(null);
+    setBookingsRefreshKey((value) => value + 1);
+    setBookingsOpen(true);
+    setToast(`Appointment saved. Status: ${booking.status || 'pending'}.`);
   };
 
   const handleLogin = (data) => {
@@ -539,6 +660,10 @@ function App() {
     localStorage.setItem('sevoraToken', token);
     localStorage.setItem('sevoraUser', JSON.stringify(user));
     setCurrentUser(user);
+    if (user.city) {
+      setSelectedCity(user.city);
+      localStorage.setItem('sevoraCity', user.city);
+    }
     setAuthOpen(false);
     setToast(`Welcome to Sevora, ${user.name || 'there'}!`);
   };
@@ -549,6 +674,7 @@ function App() {
     setCurrentUser(null);
     setToast('You have logged out successfully.');
   };
+  
 
   const categoryIcon = (category) => {
     const name = (category || '').toLowerCase();
@@ -561,6 +687,23 @@ function App() {
     return House;
   };
 
+  if (currentUser?.roles?.includes("driver")) {
+  return (
+    <DriverOnboarding
+      user={currentUser}
+      onLogout={handleLogout}
+    />
+  );
+}
+if (currentUser?.roles?.includes("driver")) {
+  return (
+    <DriverOnboarding
+      user={currentUser}
+      onLogout={handleLogout}
+    />
+  );
+}
+
   return (
     <div className="app-shell" id="home">
       <Header
@@ -569,6 +712,7 @@ function App() {
         onAuthClick={() => setAuthOpen(true)}
         currentUser={currentUser}
         onLogout={handleLogout}
+        onBookingsClick={() => setBookingsOpen(true)}
       />
 
       <main>
@@ -623,8 +767,8 @@ function App() {
           <div className="shell">
             <SectionHeading eyebrow="A LOCAL KIND OF LOVE" title="Your city. Your people." accent="Your Sevora." subtitle="Starting with the places we know, growing one neighbourhood at a time." />
             <div className="cities-search-row"><div className="cities-search"><Search size={18} /><input value={citySearch} onChange={e => { setCitySearch(e.target.value); if (e.target.value) setShowAllCities(true); }} placeholder="Find your city or nearby area" aria-label="Find your city" />{citySearch && <button onClick={() => setCitySearch('')} aria-label="Clear city search"><X size={16} /></button>}</div><span className="cities-search-caption"><MapPin size={15} /> Punjab · Chandigarh · Haryana</span></div>
-            <div className="cities-grid">{visibleCities.map((city, index) => <motion.button key={city.name} className={`city-card city-card-${index % 6} ${selectedCity === city.name ? 'city-selected' : ''}`} onClick={() => { setSelectedCity(city.name); setToast(`Your area is set to ${city.name}.`); }} initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: .1 }} transition={{ duration: .28, delay: (index % 6) * .025 }}>
-              <span className="city-card-copy"><small>{city.region.toUpperCase()}</small><strong>{city.name}</strong><span className="city-explore-label">Explore area <ArrowUpRight size={14} /></span></span><span className="city-art" aria-hidden="true"><span className="city-art-sun" /><span className="city-art-line line-one" /><span className="city-art-line line-two" /><span className="city-art-building"><i /><i /><i /><i /></span><span className="city-art-ground" /></span><span className="city-card-arrow"><ArrowUpRight size={17} /></span>
+            <div className="cities-grid">{visibleCities.map((city, index) => <motion.button type="button" key={city.name} aria-pressed={selectedCity === city.name} className={`city-card city-card-${index % 6} ${selectedCity === city.name ? 'city-card-selected' : ''}`} onClick={() => handleSelectCity(city.name, true)} initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: .1 }} transition={{ duration: .28, delay: (index % 6) * .025 }}>
+              <span className="city-card-copy"><small>{city.region.toUpperCase()}</small><strong>{city.name}</strong><span className="city-landmark">{city.landmark}</span><span className="city-explore-label">Choose this area <ArrowUpRight size={14} /></span></span><span className="city-art" aria-hidden="true"><CityIllustration type={city.art} /></span><span className="city-card-arrow" aria-hidden="true"><ArrowUpRight size={17} /></span>
             </motion.button>)}</div>
             {filteredCities.length === 0 && <div className="empty-state city-empty">No matching areas yet. Try a nearby city name.</div>}
             {!citySearch && filteredCities.length > 9 && <div className="cities-more"><button className="button button-outline" onClick={() => setShowAllCities(value => !value)}>{showAllCities ? 'Show fewer areas' : `Explore all ${filteredCities.length} areas`} <ChevronDown size={16} className={showAllCities ? 'rotate-chevron' : ''} /></button></div>}
@@ -638,7 +782,7 @@ function App() {
           </div>
         </section>
 
-        <section className="work-cta-section" id="work"><div className="shell work-cta-card"><div className="work-cta-ornament ornament-a">✳</div><div className="work-cta-ornament ornament-b">✦</div><div className="work-cta-copy"><span className="work-cta-label"><BriefcaseBusiness size={15} /> FOR LOCAL PROFESSIONALS</span><h2>Good work should<br /><span>find good people.</span></h2><p>Offer a service, build your profile, or explore job opportunities. Sevora is being built to bring local work closer to home, too.</p><div className="work-cta-actions"><button className="button button-white" onClick={() => setToast('The provider and job-seeker journey will connect to Sevora account and job APIs.')}>Explore opportunities <ArrowUpRight size={17} /></button><span><UsersRound size={16} /> A marketplace for both sides</span></div></div><div className="work-cta-graphic"><div className="graphic-ring ring-one" /><div className="graphic-ring ring-two" /><div className="graphic-center"><HeartHandshake size={54} /></div><div className="graphic-pill graphic-pill-one"><span>✳</span> Skills that matter</div><div className="graphic-pill graphic-pill-two"><span>↗</span> Local opportunity</div><div className="graphic-pill graphic-pill-three"><span>♡</span> People first</div></div></div></section>
+        <section className="work-cta-section" id="work"><div className="shell work-cta-card"><div className="work-cta-ornament ornament-a">✳</div><div className="work-cta-ornament ornament-b">✦</div><div className="work-cta-copy"><span className="work-cta-label"><BriefcaseBusiness size={15} /> FOR LOCAL PROFESSIONALS</span><h2>Good work should<br /><span>find good people.</span></h2><p>Offer a service, build your profile, or explore job opportunities. Sevora is being built to bring local work closer to home, too.</p><div className="work-cta-actions"><button className="button button-white" onClick={() => setWorkOpen(true)}>Explore opportunities <ArrowUpRight size={17} /></button><span><UsersRound size={16} /> A marketplace for both sides</span></div></div><div className="work-cta-graphic"><div className="graphic-ring ring-one" /><div className="graphic-ring ring-two" /><div className="graphic-center"><HeartHandshake size={54} /></div><div className="graphic-pill graphic-pill-one"><span>✳</span> Skills that matter</div><div className="graphic-pill graphic-pill-two"><span>↗</span> Local opportunity</div><div className="graphic-pill graphic-pill-three"><span>♡</span> People first</div></div></div></section>
 
         <section className="faq-section section-pad" id="faq"><div className="shell faq-layout"><div className="faq-intro"><div className="eyebrow"><span className="eyebrow-dot" /> THE LITTLE DETAILS</div><h2>Questions?<br /><span>We've got you.</span></h2><p>A few things worth knowing about the Sevora experience.</p><div className="faq-contact-card"><span><CircleHelp size={20} /></span><div><strong>Still curious?</strong><small>More answers will be added as the service grows.</small></div><MessageCircle size={20} className="faq-contact-arrow" /></div></div><div className="faq-list">{faqItems.map((item, index) => <div className={`faq-item ${openFaq === index ? 'faq-open' : ''}`} key={item.question}><button className="faq-question" onClick={() => setOpenFaq(openFaq === index ? -1 : index)} aria-expanded={openFaq === index}><span><i>{String(index + 1).padStart(2, '0')}</i>{item.question}</span><span className="faq-toggle">{openFaq === index ? <X size={17} /> : <ChevronDown size={17} />}</span></button><AnimatePresence initial={false}>{openFaq === index && <motion.div className="faq-answer" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: .22 }}><p>{item.answer}</p></motion.div>}</AnimatePresence></div>)}</div></div></section>
 
@@ -647,11 +791,12 @@ function App() {
 
       <footer className="site-footer"><div className="shell footer-main"><div className="footer-brand-col"><Brand light /><p>Local help for real life.<br />A little more room to be you.</p><div className="footer-socials"><a href="#home" aria-label="Sevora home">s.</a><a href="#work" aria-label="Sevora opportunities">in</a><a href="#faq" aria-label="Sevora questions">?</a></div></div><div className="footer-link-group"><h4>Discover</h4><a href="#services">Home services</a><a href="#cities">Areas & cities</a><a href="#how-it-works">How it works</a></div><div className="footer-link-group"><h4>Work with us</h4><a href="#work">Offer a service</a><a href="#work">Find local work</a><a href="#faq">Provider FAQs</a></div><div className="footer-note-box"><span className="footer-note-icon"><Navigation size={19} /></span><strong>Starting close to home.</strong><p>Built with local communities across Punjab, Chandigarh and Haryana in mind.</p><button onClick={() => setCityPickerOpen(true)}>Choose your area <ArrowUpRight size={15} /></button></div></div><div className="shell footer-bottom"><span>© {new Date().getFullYear()} Sevora. Made for everyday life.</span><span className="footer-build-note">React + Tailwind · Local marketplace preview</span><a href="#home">Back to top ↑</a></div></footer>
 
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onLogin={handleLogin} />
-      <CityPicker open={cityPickerOpen} onClose={() => setCityPickerOpen(false)} selectedCity={selectedCity} onSelect={setSelectedCity} />
-      <ServiceModal service={selectedService} onClose={() => setSelectedService(null)} selectedCity={selectedCity} onLocationClick={() => { setSelectedService(null); setCityPickerOpen(true); }} onShortlist={handleShortlist} />
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onLogin={handleLogin} defaultCity={selectedCity} />
+      <CityPicker open={cityPickerOpen} onClose={() => setCityPickerOpen(false)} selectedCity={selectedCity} onSelect={(cityName) => handleSelectCity(cityName, false)} />
+      <ServiceModal service={selectedService} onClose={() => setSelectedService(null)} selectedCity={selectedCity} onLocationClick={() => setCityPickerOpen(true)} currentUser={currentUser} onNeedLogin={() => setAuthOpen(true)} onBooked={handleBookingCreated} />
+      <BookingHistoryModal open={bookingsOpen} onClose={() => setBookingsOpen(false)} refreshKey={bookingsRefreshKey} />
+      <WorkModal open={workOpen} onClose={() => setWorkOpen(false)} selectedCity={selectedCity} currentUser={currentUser} onNeedLogin={() => setAuthOpen(true)} onToast={setToast} />
       <Toast toast={toast} onClose={() => setToast('')} />
-      {shortlist.length > 0 && <button className="shortlist-tab" onClick={() => setToast(`Your shortlist has ${shortlist.length} ${shortlist.length === 1 ? 'service' : 'services'}: ${shortlist.map(x => x.service.name).join(', ')}.`)}><HeartHandshake size={18} /><span>My shortlist</span><b>{shortlist.length}</b></button>}
     </div>
   );
 }

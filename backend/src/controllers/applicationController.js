@@ -1,44 +1,47 @@
-
+const mongoose = require("mongoose");
 const Application = require("../models/Application");
 const Job = require("../models/Job");
 
-// Applicant applies for an open job
 const applyForJob = async (req, res) => {
   try {
     const { jobId, resumeUrl, coverLetter } = req.body;
 
-    if (!jobId) {
-      return res.status(400).json({ message: "jobId is required" });
+    if (!jobId || !mongoose.Types.ObjectId.isValid(jobId)) {
+      return res.status(400).json({ message: "A valid job ID is required" });
     }
 
-    const job = await Job.findOne({ _id: jobId, status: "open" });
+    const job = await Job.findById(jobId);
 
-    if (!job) {
-      return res.status(404).json({ message: "Open job not found" });
+    if (!job || job.status !== "open") {
+      return res.status(404).json({ message: "This job is no longer available" });
+    }
+
+    if (job.expiresAt && job.expiresAt <= new Date()) {
+      return res.status(400).json({ message: "This job has expired" });
     }
 
     if (job.postedBy.toString() === req.user._id.toString()) {
-      return res.status(400).json({
-        message: "You cannot apply to your own job"
-      });
+      return res.status(400).json({ message: "You cannot apply to your own job" });
     }
 
-    const existingApplication = await Application.findOne({
-      job: jobId,
+    const existing = await Application.findOne({
+      job: job._id,
       applicant: req.user._id
     });
 
-    if (existingApplication) {
+    if (existing) {
       return res.status(409).json({
-        message: "You have already applied for this job"
+        message: "You have already applied to this job",
+        application: existing
       });
     }
 
     const application = await Application.create({
-      job: jobId,
+      job: job._id,
       applicant: req.user._id,
-      resumeUrl,
-      coverLetter
+      resumeUrl: resumeUrl || undefined,
+      coverLetter: coverLetter || "",
+      status: "pending"
     });
 
     return res.status(201).json({
@@ -46,25 +49,25 @@ const applyForJob = async (req, res) => {
       application
     });
   } catch (error) {
-    // MongoDB unique index also protects against duplicate applications
     if (error.code === 11000) {
-      return res.status(409).json({
-        message: "You have already applied for this job"
-      });
+      return res.status(409).json({ message: "You have already applied" });
     }
 
     console.error("Apply for job error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Failed to submit application" });
   }
 };
 
-// Applicant views their applications
 const getMyApplications = async (req, res) => {
   try {
-    const applications = await Application.find({
-      applicant: req.user._id
-    })
-      .populate("job")
+    const applications = await Application.find({ applicant: req.user._id })
+      .populate({
+        path: "job",
+        populate: [
+          { path: "business", select: "name category locality address" },
+          { path: "postedBy", select: "name phone" }
+        ]
+      })
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
@@ -73,19 +76,18 @@ const getMyApplications = async (req, res) => {
     });
   } catch (error) {
     console.error("Get my applications error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Failed to fetch applications" });
   }
 };
 
-// Employer views applications for jobs they posted
 const getApplicationsForMyJobs = async (req, res) => {
   try {
     const myJobs = await Job.find({ postedBy: req.user._id }).select("_id");
-    const jobIds = myJobs.map(job => job._id);
+    const jobIds = myJobs.map((job) => job._id);
 
     const applications = await Application.find({ job: { $in: jobIds } })
-      .populate("applicant", "name email")
-      .populate("job", "title category locality")
+      .populate("applicant", "name email phone city address")
+      .populate("job", "title category locality employmentType status")
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
@@ -93,43 +95,28 @@ const getApplicationsForMyJobs = async (req, res) => {
       applications
     });
   } catch (error) {
-    console.error("Get job applications error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    console.error("Get applications for my jobs error:", error);
+    return res.status(500).json({ message: "Failed to fetch applicants" });
   }
 };
 
-// Employer updates an application's status
 const updateApplicationStatus = async (req, res) => {
   try {
     const { status } = req.body;
-    const allowedStatuses = ["shortlisted", "selected", "rejected"];
 
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({
-        message: "Status must be shortlisted, selected, or rejected"
-      });
+    if (!["reviewing", "shortlisted", "accepted", "rejected"].includes(status)) {
+      return res.status(400).json({ message: "Invalid application status" });
     }
 
-    const application = await Application.findById(req.params.id);
+    const application = await Application.findById(req.params.id).populate("job");
 
     if (!application) {
       return res.status(404).json({ message: "Application not found" });
     }
 
-    const job = await Job.findOne({
-      _id: application.job,
-      postedBy: req.user._id
-    });
-
-    if (!job) {
+    if (application.job.postedBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({
-        message: "You can only review applications for your own jobs"
-      });
-    }
-
-    if (application.status === "withdrawn") {
-      return res.status(400).json({
-        message: "Withdrawn applications cannot be updated"
+        message: "Only the employer who posted the job can update applications"
       });
     }
 
@@ -142,7 +129,7 @@ const updateApplicationStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("Update application status error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Failed to update application" });
   }
 };
 

@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Booking = require("../models/Booking");
 const Service = require("../models/Service");
 const ServiceProvider = require("../models/ServiceProvider");
+const User = require("../models/User");
 
 const ACTIVE_STATUSES = [
   "pending",
@@ -11,7 +12,7 @@ const ACTIVE_STATUSES = [
   "trip_started"
 ];
 
-const ALLOWED_TRANSITIONS = {
+const TRANSITIONS = {
   pending: ["accepted", "rejected", "cancelled"],
   accepted: ["in_progress", "driver_arrived", "cancelled"],
   driver_arrived: ["trip_started", "cancelled"],
@@ -19,287 +20,217 @@ const ALLOWED_TRANSITIONS = {
   in_progress: ["completed"]
 };
 
-const VALID_BOOKING_STATUSES = [
-  "pending",
-  "accepted",
-  "rejected",
-  "in_progress",
-  "driver_arrived",
-  "trip_started",
-  "completed",
-  "cancelled"
-];
-
 const normalize = (value) =>
-  String(value || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, " ");
+  String(value || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, " ");
 
-// If a provider has listed skills/categories, check that they match.
-// Empty legacy profiles remain usable until their skills are completed.
-const providerCanPerform = (provider, service) => {
+const canPerformService = (provider, service) => {
   const capabilities = [
     ...(provider.skills || []),
     ...(provider.serviceCategories || [])
-  ]
-    .map(normalize)
-    .filter(Boolean);
+  ].map(normalize).filter(Boolean);
 
-  if (capabilities.length === 0) {
-    return true;
-  }
+  if (!capabilities.length) return true;
 
-  const serviceTerms = [
+  const terms = [
     service.name,
     service.category,
     ...(service.tags || [])
-  ]
-    .map(normalize)
-    .filter(Boolean);
+  ].map(normalize).filter(Boolean);
 
   return capabilities.some((capability) =>
-    serviceTerms.some(
-      (term) =>
-        capability === term ||
-        capability.includes(term) ||
-        term.includes(capability)
+    terms.some((term) =>
+      capability === term ||
+      capability.includes(term) ||
+      term.includes(capability)
     )
   );
 };
 
-// POST /api/bookings
 const createBooking = async (req, res) => {
   try {
     const {
-      providerId,
       serviceId,
+      providerId,
       bookingType,
       scheduledAt,
       durationMinutes,
+      city,
       address,
-      serviceDescription,
-      trip
+      trip,
+      serviceDescription
     } = req.body;
 
-    if (
-      !providerId ||
-      !mongoose.Types.ObjectId.isValid(providerId) ||
-      !["home_service", "driver"].includes(bookingType) ||
-      !scheduledAt
-    ) {
-      return res.status(400).json({
-        message: "A valid provider, booking type and scheduled time are required"
-      });
+    if (!["home_service", "driver"].includes(bookingType)) {
+      return res.status(400).json({ message: "Invalid booking type" });
     }
 
     const scheduledDate = new Date(scheduledAt);
 
-    if (
-      Number.isNaN(scheduledDate.getTime()) ||
-      scheduledDate <= new Date()
-    ) {
+    if (!scheduledAt || Number.isNaN(scheduledDate.getTime()) ||
+        scheduledDate <= new Date()) {
       return res.status(400).json({
-        message: "Scheduled time must be in the future"
+        message: "Choose a valid future appointment date and time"
       });
     }
 
-    const provider = await ServiceProvider.findById(providerId);
+    const customer = await User.findById(req.user._id);
 
-    if (!provider || provider.providerType !== bookingType) {
-      return res.status(404).json({
-        message: "Matching provider not found"
-      });
+    if (!customer) {
+      return res.status(401).json({ message: "Customer account not found" });
     }
 
-    if (provider.availability !== "available") {
+    const bookingCity = String(city || customer.city || "").trim();
+
+    if (!bookingCity) {
       return res.status(400).json({
-        message: "Provider is not currently available"
+        message: "Select a service city"
       });
     }
 
     let service = null;
 
-    // New catalogue-based booking. Older clients can still submit
-    // serviceDescription without serviceId for backward compatibility.
     if (serviceId) {
       if (!mongoose.Types.ObjectId.isValid(serviceId)) {
-        return res.status(400).json({
-          message: "Invalid service ID"
-        });
+        return res.status(400).json({ message: "Invalid service ID" });
       }
 
-      service = await Service.findOne({
-        _id: serviceId,
-        isActive: true
-      });
+      service = await Service.findOne({ _id: serviceId, isActive: true });
 
-      if (!service) {
+      if (!service || service.providerType !== bookingType) {
         return res.status(404).json({
-          message: "Selected service was not found or is inactive"
-        });
-      }
-
-      if (service.providerType !== bookingType) {
-        return res.status(400).json({
-          message: "Selected service does not match the booking type"
-        });
-      }
-
-      if (!providerCanPerform(provider, service)) {
-        return res.status(400).json({
-          message: "This provider has not listed the selected service or skill"
+          message: "Selected service is unavailable"
         });
       }
     }
 
-    let finalDuration = Number(
-      durationMinutes ??
-        service?.estimatedDurationMinutes ??
-        60
+    const duration = Number(
+      durationMinutes || service?.estimatedDurationMinutes || 60
     );
+
+    if (!Number.isInteger(duration) || duration < 15 || duration > 1440) {
+      return res.status(400).json({
+        message: "Duration must be between 15 and 1440 minutes"
+      });
+    }
+
+    if (bookingType === "home_service" && !String(address || customer.address || "").trim()) {
+      return res.status(400).json({ message: "Service address is required" });
+    }
 
     if (
-      !Number.isInteger(finalDuration) ||
-      finalDuration < 15 ||
-      finalDuration > 1440
+      bookingType === "driver" &&
+      (!trip?.pickup || !trip?.destination ||
+        !["one_way", "round_trip", "hourly"].includes(trip?.tripType))
     ) {
       return res.status(400).json({
-        message: "Duration must be between 15 and 1440 whole minutes"
+        message: "Driver bookings require pickup, destination and trip type"
       });
     }
 
-    if (bookingType === "home_service" && !String(address || "").trim()) {
-      return res.status(400).json({
-        message: "Service address is required"
+    // Customers normally don't select a provider. If a providerId is sent,
+    // validate it; otherwise find the first eligible available provider.
+    let providersQuery = {
+      providerType: bookingType,
+      availability: "available",
+      verificationStatus: "verified"
+    };
+
+    if (providerId) {
+      if (!mongoose.Types.ObjectId.isValid(providerId)) {
+        return res.status(400).json({ message: "Invalid provider ID" });
+      }
+      providersQuery._id = providerId;
+    }
+
+    const candidates = await ServiceProvider.find(providersQuery)
+      .populate("user", "name phone city address")
+      .sort({ averageRating: -1, completedJobs: -1 });
+
+    const provider = candidates.find((candidate) => {
+      const profileCity = (candidate.serviceAreas || []).map(normalize);
+      const userCity = normalize(candidate.user?.city);
+      const requestedCity = normalize(bookingCity);
+
+      const cityMatches =
+        profileCity.includes(requestedCity) || userCity === requestedCity;
+
+      return cityMatches && (!service || canPerformService(candidate, service));
+    });
+
+    if (!provider) {
+      return res.status(409).json({
+        message: `No verified, available ${bookingType === "driver" ? "driver" : "professional"} is currently listed for ${bookingCity}.`
       });
     }
 
-    if (bookingType === "driver") {
-      if (
-        !String(trip?.pickup || "").trim() ||
-        !String(trip?.destination || "").trim() ||
-        !["one_way", "round_trip", "hourly"].includes(trip?.tripType)
-      ) {
-        return res.status(400).json({
-          message:
-            "Driver bookings require pickup, destination and a valid trip type"
-        });
-      }
-
-      if (
-        trip.vehicleTransmission &&
-        !["manual", "automatic"].includes(trip.vehicleTransmission)
-      ) {
-        return res.status(400).json({
-          message: "Vehicle transmission must be manual or automatic"
-        });
-      }
-
-      if (service?.tripType && service.tripType !== trip.tripType) {
-        return res.status(400).json({
-          message: "Trip type does not match the selected driver service"
-        });
-      }
-    }
-
-    // Calculate the price using the service catalogue.
-    // Never trust a quotedPrice supplied by the client.
-    let calculatedPrice;
-
-    if (service && service.pricingType !== "quote") {
-      if (
-        typeof service.basePrice === "number" &&
-        Number.isFinite(service.basePrice)
-      ) {
-        calculatedPrice =
-          service.pricingType === "hourly"
-            ? service.basePrice * Math.ceil(finalDuration / 60)
-            : service.basePrice;
-      }
-    }
-
-    // Prevent overlapping bookings for this provider.
-    // The 24-hour lookback covers the maximum allowed booking duration.
-    const candidateEnd = new Date(
-      scheduledDate.getTime() + finalDuration * 60 * 1000
-    );
-
-    const earliestPossibleStart = new Date(
-      scheduledDate.getTime() - 24 * 60 * 60 * 1000
-    );
+    const start = scheduledDate.getTime();
+    const end = start + duration * 60 * 1000;
 
     const nearbyBookings = await Booking.find({
       provider: provider._id,
       status: { $in: ACTIVE_STATUSES },
       scheduledAt: {
-        $gte: earliestPossibleStart,
-        $lt: candidateEnd
+        $gte: new Date(start - 24 * 60 * 60 * 1000),
+        $lt: new Date(end)
       }
-    })
-      .select("scheduledAt durationMinutes")
-      .lean();
+    }).select("scheduledAt durationMinutes").lean();
 
-    const hasConflict = nearbyBookings.some((existing) => {
+    const overlap = nearbyBookings.some((existing) => {
       const existingStart = new Date(existing.scheduledAt).getTime();
-      const existingDuration = existing.durationMinutes || 60;
-      const existingEnd =
-        existingStart + existingDuration * 60 * 1000;
+      const existingEnd = existingStart +
+        (existing.durationMinutes || 60) * 60 * 1000;
 
-      return (
-        scheduledDate.getTime() < existingEnd &&
-        existingStart < candidateEnd.getTime()
-      );
+      return start < existingEnd && existingStart < end;
     });
 
-    if (hasConflict) {
+    if (overlap) {
       return res.status(409).json({
-        message: "Provider already has a booking during this time"
+        message: "This professional is already booked at that time. Please choose another time."
       });
     }
 
-    const bookingData = {
-      customer: req.user._id,
+    let quotedPrice;
+
+    if (service && service.pricingType !== "quote" &&
+        typeof service.basePrice === "number") {
+      quotedPrice = service.pricingType === "hourly"
+        ? service.basePrice * Math.ceil(duration / 60)
+        : service.basePrice;
+    }
+
+    const booking = await Booking.create({
+      customer: customer._id,
       provider: provider._id,
+      service: service?._id,
       bookingType,
       scheduledAt: scheduledDate,
-      durationMinutes: finalDuration,
-      address,
-      serviceDescription: service
-        ? service.name
-        : serviceDescription,
+      durationMinutes: duration,
+      city: bookingCity,
+      customerPhone: customer.phone || "",
+      providerPhone: provider.user?.phone || "",
+      address: bookingType === "home_service"
+        ? String(address || customer.address || "").trim()
+        : undefined,
+      serviceDescription: service?.name || serviceDescription || "",
       trip: bookingType === "driver" ? trip : undefined,
+      quotedPrice,
       status: "pending"
-    };
+    });
 
-    if (service) {
-      bookingData.service = service._id;
-    }
-
-    // For catalogue-based bookings, use the server-calculated price.
-    // For quote-based services, the price stays unset until quoted.
-    if (calculatedPrice !== undefined) {
-      bookingData.quotedPrice = calculatedPrice;
-    }
-
-    const booking = await Booking.create(bookingData);
+    const populated = await Booking.findById(booking._id)
+      .populate("customer", "name email phone address city")
+      .populate({
+        path: "provider",
+        populate: { path: "user", select: "name phone city" }
+      })
+      .populate("service", "name category pricingType basePrice");
 
     return res.status(201).json({
-      message: "Booking request created",
-      booking
+      message: "Appointment booked successfully. Awaiting professional confirmation.",
+      booking: populated
     });
   } catch (error) {
     console.error("Create booking error:", error);
-
-    if (
-      error.name === "ValidationError" ||
-      error.name === "CastError"
-    ) {
-      return res.status(400).json({
-        message: "Invalid booking data",
-        error: error.message
-      });
-    }
 
     return res.status(500).json({
       message: "Failed to create booking"
@@ -307,161 +238,87 @@ const createBooking = async (req, res) => {
   }
 };
 
-// GET /api/bookings/my
 const getMyBookings = async (req, res) => {
   try {
-    const roles = req.user.roles || [];
-    const conditions = [];
-
-    // Employers are included for compatibility with your existing
-    // create-booking permission.
-    if (roles.includes("customer") || roles.includes("employer")) {
-      conditions.push({ customer: req.user._id });
-    }
-
-    const profile = await ServiceProvider.findOne({
-      user: req.user._id
-    }).select("_id");
-
-    if (profile) {
-      conditions.push({ provider: profile._id });
-    }
-
-    if (conditions.length === 0) {
-      return res.status(403).json({
-        message: "No customer or service-provider booking profile found"
-      });
-    }
-
-    const query =
-      conditions.length === 1
-        ? conditions[0]
-        : { $or: conditions };
+    const profile = await ServiceProvider.findOne({ user: req.user._id }).select("_id");
+    const query = profile
+      ? { $or: [{ customer: req.user._id }, { provider: profile._id }] }
+      : { customer: req.user._id };
 
     const bookings = await Booking.find(query)
-      .populate("customer", "name email")
+      .populate("customer", "name email phone address city")
       .populate({
         path: "provider",
-        populate: {
-          path: "user",
-          select: "name"
-        }
+        populate: { path: "user", select: "name phone city" }
       })
       .populate("service", "name category pricingType basePrice")
       .sort({ createdAt: -1 });
 
-    return res.status(200).json({
-      count: bookings.length,
-      bookings
-    });
+    return res.status(200).json({ count: bookings.length, bookings });
   } catch (error) {
     console.error("Get bookings error:", error);
-
-    return res.status(500).json({
-      message: "Failed to fetch bookings"
-    });
+    return res.status(500).json({ message: "Failed to fetch bookings" });
   }
 };
 
-// PATCH /api/bookings/:id/status
 const updateBookingStatus = async (req, res) => {
   try {
-    const { status, cancellationReason } = req.body;
-
-    if (!VALID_BOOKING_STATUSES.includes(status)) {
-      return res.status(400).json({
-        message: "Invalid booking status"
-      });
-    }
-
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({
-        message: "Invalid booking ID"
-      });
+      return res.status(400).json({ message: "Invalid booking ID" });
     }
 
+    const { status, cancellationReason } = req.body;
     const booking = await Booking.findById(req.params.id);
 
     if (!booking) {
-      return res.status(404).json({
-        message: "Booking not found"
-      });
+      return res.status(404).json({ message: "Booking not found" });
     }
 
-    const isCustomer =
-      booking.customer.toString() === req.user._id.toString();
+    const isCustomer = booking.customer.toString() === req.user._id.toString();
+    const profile = await ServiceProvider.findOne({ user: req.user._id }).select("_id");
+    const isProvider = profile && booking.provider.toString() === profile._id.toString();
 
-    const profile = await ServiceProvider.findOne({
-      user: req.user._id
-    }).select("_id");
-
-    const isAssignedProvider =
-      profile &&
-      booking.provider.toString() === profile._id.toString();
-
-    if (!isCustomer && !isAssignedProvider) {
-      return res.status(403).json({
-        message: "You cannot modify this booking"
-      });
+    if (!isCustomer && !isProvider) {
+      return res.status(403).json({ message: "You cannot modify this booking" });
     }
 
-    // Customers can only cancel before work starts.
     if (status === "cancelled" && isCustomer) {
       if (!["pending", "accepted"].includes(booking.status)) {
         return res.status(400).json({
-          message:
-            "Customers can cancel only pending or accepted bookings"
+          message: "This booking can no longer be cancelled by the customer"
         });
       }
-    } else if (!isAssignedProvider) {
+    } else if (!isProvider) {
       return res.status(403).json({
-        message: "Only the assigned provider can perform this action"
+        message: "Only the assigned professional can perform this action"
       });
     }
 
-    const validNextStatuses =
-      ALLOWED_TRANSITIONS[booking.status] || [];
-
-    if (!validNextStatuses.includes(status)) {
+    if (!(TRANSITIONS[booking.status] || []).includes(status)) {
       return res.status(400).json({
         message: `Cannot change booking from ${booking.status} to ${status}`
       });
     }
 
-    if (
-      booking.bookingType === "home_service" &&
-      ["driver_arrived", "trip_started"].includes(status)
-    ) {
+    if (booking.bookingType === "home_service" &&
+        ["driver_arrived", "trip_started"].includes(status)) {
       return res.status(400).json({
-        message:
-          "Driver-specific statuses cannot be used for home-service bookings"
+        message: "Driver statuses cannot be used for home services"
       });
     }
 
-    if (
-      booking.bookingType === "driver" &&
-      status === "in_progress"
-    ) {
+    if (booking.bookingType === "driver" && status === "in_progress") {
       return res.status(400).json({
-        message:
-          "Driver bookings must use driver_arrived and trip_started"
+        message: "Use driver_arrived or trip_started for driver bookings"
       });
-    }
-
-    if (status === "cancelled" && cancellationReason !== undefined) {
-      if (
-        typeof cancellationReason !== "string" ||
-        cancellationReason.length > 500
-      ) {
-        return res.status(400).json({
-          message: "Cancellation reason must be 500 characters or fewer"
-        });
-      }
-
-      booking.cancellationReason = cancellationReason.trim();
     }
 
     booking.status = status;
+
+    if (status === "cancelled" && typeof cancellationReason === "string") {
+      booking.cancellationReason = cancellationReason.slice(0, 500).trim();
+    }
+
     await booking.save();
 
     return res.status(200).json({
@@ -470,20 +327,7 @@ const updateBookingStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("Update booking error:", error);
-
-    if (
-      error.name === "ValidationError" ||
-      error.name === "CastError"
-    ) {
-      return res.status(400).json({
-        message: "Invalid booking update",
-        error: error.message
-      });
-    }
-
-    return res.status(500).json({
-      message: "Failed to update booking"
-    });
+    return res.status(500).json({ message: "Failed to update booking" });
   }
 };
 

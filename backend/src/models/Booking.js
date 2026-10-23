@@ -16,7 +16,6 @@ const bookingSchema = new mongoose.Schema(
       index: true
     },
 
-    // Optional for backward compatibility with existing bookings.
     service: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Service",
@@ -32,6 +31,22 @@ const bookingSchema = new mongoose.Schema(
     scheduledAt: {
       type: Date,
       required: true
+    },
+
+    city: {
+      type: String,
+      trim: true,
+      index: true
+    },
+
+    customerPhone: {
+      type: String,
+      trim: true
+    },
+
+    providerPhone: {
+      type: String,
+      trim: true
     },
 
     durationMinutes: {

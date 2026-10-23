@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, UserRound, X } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, UserRound, X, Phone, MapPin } from 'lucide-react';
+import { cities } from './data';
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
-export default function AuthModal({ open, onClose, onLogin }) {
+export default function AuthModal({ open, onClose, onLogin, defaultCity = 'Rajpura' }) {
   const [mode, setMode] = useState('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [city, setCity] = useState(localStorage.getItem('sevoraCity') || defaultCity || 'Rajpura');
   const [role, setRole] = useState('customer');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -16,12 +20,14 @@ export default function AuthModal({ open, onClose, onLogin }) {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      setCity(localStorage.getItem('sevoraCity') || defaultCity || 'Rajpura');
+    } else {
       setError('');
       setMessage('');
       setLoading(false);
     }
-  }, [open]);
+  }, [open, defaultCity]);
 
   const switchMode = (nextMode) => {
     setMode(nextMode);
@@ -42,13 +48,21 @@ export default function AuthModal({ open, onClose, onLogin }) {
       setError('Password must contain at least 8 characters.');
       return;
     }
+    if (mode === 'signup' && phone.replace(/\D/g, '').length < 10) {
+      setError('Please enter a valid phone number with at least 10 digits.');
+      return;
+    }
+    if (mode === 'signup' && !address.trim()) {
+      setError('Please enter your address so bookings can be pre-filled.');
+      return;
+    }
 
     setLoading(true);
     try {
       const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
       const payload = mode === 'login'
         ? { email: email.trim(), password }
-        : { name: name.trim(), email: email.trim(), password, role };
+        : { name: name.trim(), email: email.trim(), password, role, phone: phone.trim(), address: address.trim(), city };
 
       const response = await fetch(`${API_BASE}${endpoint}`, {
         method: 'POST',
@@ -121,8 +135,19 @@ export default function AuthModal({ open, onClose, onLogin }) {
                   <label className="auth-label">I want to
                     <select className="auth-role-select" value={role} onChange={e => setRole(e.target.value)}>
                       <option value="customer">Book home services</option>
-                      <option value="provider">Offer services as a provider</option>
+                      <option value="provider">Offer home services</option>
+                      <option value="driver">Work as a driver</option>
+                      <option value="employer">Hire people / post jobs</option>
                     </select>
+                  </label>
+                  <label className="auth-label">Phone number
+                    <span className="auth-input-wrap"><Phone size={17} /><input type="tel" autoComplete="tel" inputMode="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="10-digit mobile number" minLength={10} required /></span>
+                  </label>
+                  <label className="auth-label">City / service area
+                    <span className="auth-input-wrap"><MapPin size={17} /><select className="auth-inline-select" value={city} onChange={e => { setCity(e.target.value); localStorage.setItem('sevoraCity', e.target.value); }} required>{cities.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></span>
+                  </label>
+                  <label className="auth-label">Full address
+                    <span className="auth-input-wrap auth-address-wrap"><MapPin size={17} /><textarea autoComplete="street-address" value={address} onChange={e => setAddress(e.target.value)} placeholder="House / flat, street, locality and PIN code" rows={2} required /></span>
                   </label>
                 </>
               )}

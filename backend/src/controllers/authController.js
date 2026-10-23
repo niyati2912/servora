@@ -1,11 +1,10 @@
-
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
 const register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, phone, address, city } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({
@@ -13,12 +12,12 @@ const register = async (req, res) => {
       });
     }
 
-    if (typeof name !== "string" ||
-        typeof email !== "string" ||
-        typeof password !== "string") {
-      return res.status(400).json({
-        message: "Invalid input types"
-      });
+    if (
+      typeof name !== "string" ||
+      typeof email !== "string" ||
+      typeof password !== "string"
+    ) {
+      return res.status(400).json({ message: "Invalid input types" });
     }
 
     if (password.length < 8) {
@@ -27,23 +26,47 @@ const register = async (req, res) => {
       });
     }
 
-    // Public registration must not allow admin creation.
     const allowedRoles = ["customer", "provider", "driver", "employer"];
     const selectedRole = role || "customer";
 
     if (!allowedRoles.includes(selectedRole)) {
+      return res.status(400).json({ message: "Invalid role" });
+    }
+
+    if (
+      phone !== undefined &&
+      (
+        typeof phone !== "string" ||
+        phone.replace(/\D/g, "").length < 10 ||
+        phone.replace(/\D/g, "").length > 15
+      )
+    ) {
       return res.status(400).json({
-        message: "Invalid role"
+        message: "Phone number must contain 10 to 15 digits"
+      });
+    }
+
+    if (
+      address !== undefined &&
+      (typeof address !== "string" || address.trim().length > 300)
+    ) {
+      return res.status(400).json({
+        message: "Address must be 300 characters or fewer"
+      });
+    }
+
+    if (
+      city !== undefined &&
+      (typeof city !== "string" || city.trim().length > 100)
+    ) {
+      return res.status(400).json({
+        message: "City must be 100 characters or fewer"
       });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    const existingUser = await User.findOne({
-      email: normalizedEmail
-    });
-
-    if (existingUser) {
+    if (await User.findOne({ email: normalizedEmail })) {
       return res.status(409).json({
         message: "Email is already registered"
       });
@@ -55,6 +78,9 @@ const register = async (req, res) => {
       name: name.trim(),
       email: normalizedEmail,
       password: hashedPassword,
+      phone: phone?.trim(),
+      address: address?.trim(),
+      city: city?.trim(),
       roles: [selectedRole]
     });
 
@@ -64,6 +90,9 @@ const register = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
+        phone: user.phone || "",
+        address: user.address || "",
+        city: user.city || "",
         roles: user.roles
       }
     });
@@ -75,6 +104,7 @@ const register = async (req, res) => {
     }
 
     console.error("Registration error:", error.message);
+
     return res.status(500).json({
       message: "Internal server error"
     });
@@ -112,17 +142,17 @@ const login = async (req, res) => {
       });
     }
 
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({
+        message: "Authentication is not configured"
+      });
+    }
+
     const token = jwt.sign(
       { userId: user._id.toString() },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
-
-    if (!process.env.JWT_SECRET) {
-  return res.status(500).json({
-    message: "Authentication is not configured"
-  });
-}
 
     return res.status(200).json({
       message: "Login successful",
@@ -131,11 +161,15 @@ const login = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
+        phone: user.phone || "",
+        address: user.address || "",
+        city: user.city || "",
         roles: user.roles
       }
     });
   } catch (error) {
     console.error("Login error:", error.message);
+
     return res.status(500).json({
       message: "Internal server error"
     });

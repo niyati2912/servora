@@ -22,7 +22,19 @@ const userSchema = new mongoose.Schema(
     },
     phone: {
       type: String,
-      trim: true
+      trim: true,
+      maxlength: 24
+    },
+    address: {
+      type: String,
+      trim: true,
+      maxlength: 300
+    },
+    city: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      index: true
     },
     roles: {
       type: [{

@@ -1,4 +1,3 @@
-
 const express = require("express");
 const cors = require("cors");
 
@@ -11,6 +10,8 @@ const applicationRoutes = require("./routes/applicationRoutes");
 const reviewRoutes = require("./routes/reviewRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const serviceRequestRoutes = require("./routes/serviceRequestRoutes");
+const serviceRoutes = require("./routes/serviceRoutes");
+
 const { protect, authorizeRoles } = require("./middleware/authMiddleware");
 
 const app = express();
@@ -29,7 +30,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/providers", providerRoutes);
 app.use("/api/bookings", bookingRoutes);
@@ -39,21 +39,22 @@ app.use("/api/applications", applicationRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
-app.use("/api/services", require("./routes/serviceRoutes"));
+app.use("/api/services", serviceRoutes);
 
-// Authenticated user information
 app.get("/api/auth/me", protect, (req, res) => {
   res.json({
     user: {
       id: req.user._id,
       name: req.user.name,
       email: req.user.email,
+      phone: req.user.phone || "",
+      address: req.user.address || "",
+      city: req.user.city || "",
       roles: req.user.roles
     }
   });
 });
 
-// Admin test route
 app.get(
   "/api/admin/test",
   protect,
