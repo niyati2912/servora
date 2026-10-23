@@ -9,6 +9,7 @@ import {
   Leaf, Hammer, Building2, Navigation, CheckCircle2
 } from 'lucide-react';
 import { cities, fallbackServices, faqItems, servicePhotos } from './data';
+import CityIllustration from "./CityIllustration";
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 

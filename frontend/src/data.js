@@ -1,22 +1,22 @@
 export const cities = [
-  { name: 'Rajpura', region: 'Punjab', group: 'Tricity & nearby', mark: 'RP' },
-  { name: 'Chandigarh', region: 'Chandigarh', group: 'Tricity & nearby', mark: 'CH' },
-  { name: 'Panchkula', region: 'Haryana', group: 'Tricity & nearby', mark: 'PK' },
-  { name: 'Mohali', region: 'Punjab', group: 'Tricity & nearby', mark: 'MO' },
-  { name: 'Zirakpur', region: 'Punjab', group: 'Tricity & nearby', mark: 'ZI' },
-  { name: 'Ambala', region: 'Haryana', group: 'Haryana', mark: 'AM' },
-  { name: 'Patiala', region: 'Punjab', group: 'Punjab', mark: 'PT' },
-  { name: 'Samana', region: 'Punjab', group: 'Punjab', mark: 'SM' },
-  { name: 'Sirhind', region: 'Punjab', group: 'Punjab', mark: 'SH' },
-  { name: 'Khanna', region: 'Punjab', group: 'Punjab', mark: 'KH' },
-  { name: 'Ludhiana', region: 'Punjab', group: 'Punjab', mark: 'LD' },
-  { name: 'Shahabad Markanda', region: 'Haryana', group: 'Haryana', mark: 'SB' },
-  { name: 'Kurukshetra', region: 'Haryana', group: 'Haryana', mark: 'KK' },
-  { name: 'Karnal', region: 'Haryana', group: 'Haryana', mark: 'KN' },
-  { name: 'Yamunanagar', region: 'Haryana', group: 'Haryana', mark: 'YN' },
-  { name: 'Jalandhar', region: 'Punjab', group: 'Punjab', mark: 'JL' },
-  { name: 'Amritsar', region: 'Punjab', group: 'Punjab', mark: 'AS' },
-  { name: 'Bathinda', region: 'Punjab', group: 'Punjab', mark: 'BT' }
+  { name: "Chandigarh", region: "Chandigarh", group: "Tricity & nearby", mark: "CH", landmark: "Capitol Complex & Open Hand Monument", art: "capitol" },
+  { name: "Mohali", region: "Punjab", group: "Tricity & nearby", mark: "MO", landmark: "PCA Stadium & IT skyline", art: "skyline" },
+  { name: "Panchkula", region: "Haryana", group: "Tricity & nearby", mark: "PK", landmark: "Cactus Garden & Morni Hills", art: "garden" },
+  { name: "Patiala", region: "Punjab", group: "Punjab", mark: "PT", landmark: "Qila Mubarak & Baradari Gardens", art: "palace" },
+  { name: "Amritsar", region: "Punjab", group: "Punjab", mark: "AS", landmark: "Sri Harmandir Sahib", art: "temple" },
+  { name: "Ludhiana", region: "Punjab", group: "Punjab", mark: "LD", landmark: "Victoria Memorial Clock Tower", art: "clocktower" },
+  { name: "Kurukshetra", region: "Haryana", group: "Haryana", mark: "KK", landmark: "Brahma Sarovar & Rath Monument", art: "temple" },
+  { name: "Karnal", region: "Haryana", group: "Haryana", mark: "KN", landmark: "Karna Lake & Historic Gateway", art: "gateway" },
+  { name: "Jalandhar", region: "Punjab", group: "Punjab", mark: "JL", landmark: "Devi Talab Mandir & Sports Complex", art: "temple" },
+  { name: "Bathinda", region: "Punjab", group: "Punjab", mark: "BT", landmark: "Qila Mubarak Brick Bastions", art: "fort" },
+  { name: "Sirhind", region: "Punjab", group: "Punjab", mark: "SH", landmark: "Aam Khas Bagh & Mughal Gardens", art: "garden" },
+  { name: "Rajpura", region: "Punjab", group: "Tricity & nearby", mark: "RP", landmark: "Local markets & heritage architecture", art: "gateway" },
+  { name: "Yamunanagar", region: "Haryana", group: "Haryana", mark: "YN", landmark: "Hathnikund Barrage & Kalesar Hills", art: "barrage" },
+  { name: "Ambala", region: "Haryana", group: "Haryana", mark: "AM", landmark: "Rani Ka Talab & Cantonment Arches", art: "waterTank" },
+  { name: "Zirakpur", region: "Punjab", group: "Tricity & nearby", mark: "ZI", landmark: "Elevated Flyover & Chhatbir Gateway", art: "skyline" },
+  { name: "Samana", region: "Punjab", group: "Punjab", mark: "SM", landmark: "Mughal Gateway & Historic Ramparts", art: "gateway" },
+  { name: "Khanna", region: "Punjab", group: "Punjab", mark: "KH", landmark: "Grain Market & Historic Sarai", art: "grainMarket" },
+  { name: "Shahabad Markanda", region: "Haryana", group: "Haryana", mark: "SB", landmark: "Markandeshwar Temple & Markanda River", art: "temple" },
 ];
 
 export const fallbackServices = [
@@ -65,14 +65,22 @@ export const fallbackServices = [
 ];
 
 export const servicePhotos = {
-  house: 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=900&q=85',
-  cleaning: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=900&q=85',
-  cook: 'https://images.unsplash.com/photo-1556911220-bff31c812dba?auto=format&fit=crop&w=900&q=85',
-  plumbing: 'https://images.unsplash.com/photo-1607472586893-edb57bdc0e39?auto=format&fit=crop&w=900&q=85',
-  electrical: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&w=900&q=85',
-  driver: 'https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?auto=format&fit=crop&w=900&q=85'
-};
+  house:
+    "https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=900&q=85",
 
+  cleaning:
+    "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=900&q=85",
+
+  cook:
+    "https://images.unsplash.com/photo-1556911220-bff31c812dba?auto=format&fit=crop&w=900&q=85",
+
+  plumbing: "/images/plumber-worker.png",
+
+  electrical: "/images/ac-technician.png",
+
+  driver:
+    "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?auto=format&fit=crop&w=900&q=85",
+};
 export const faqItems = [
   {
     question: 'What is Sevora?',
