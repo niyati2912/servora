@@ -112,25 +112,35 @@ const getJobs = async (req, res) => {
       filter.employmentType = req.query.employmentType;
     }
 
+    // Expiry and search text each need their own $or, so both go inside
+    // $and. (Assigning filter.$or twice made the expiry filter overwrite
+    // the search text.)
+    const clauses = [
+      {
+        $or: [
+          { expiresAt: null },
+          { expiresAt: { $exists: false } },
+          { expiresAt: { $gt: new Date() } }
+        ]
+      }
+    ];
+
     if (req.query.q) {
       const pattern = {
         $regex: escapeRegex(req.query.q),
         $options: "i"
       };
 
-      filter.$or = [
-        { title: pattern },
-        { description: pattern },
-        { category: pattern }
-      ];
+      clauses.push({
+        $or: [
+          { title: pattern },
+          { description: pattern },
+          { category: pattern }
+        ]
+      });
     }
 
-    filter.$or = [
-      ...(filter.$or || []),
-      { expiresAt: null },
-      { expiresAt: { $exists: false } },
-      { expiresAt: { $gt: new Date() } }
-    ];
+    filter.$and = clauses;
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
@@ -172,4 +182,39 @@ const getMyJobs = async (req, res) => {
   }
 };
 
-module.exports = { createJob, getJobs, getMyJobs };
+// PATCH /api/jobs/:id/close - the employer who posted the job
+const closeJob = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid job ID" });
+    }
+
+    const job = await Job.findById(req.params.id);
+
+    if (!job) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    if (job.postedBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        message: "You can only close jobs that you posted"
+      });
+    }
+
+    if (job.status !== "open") {
+      return res.status(400).json({
+        message: `This job is already ${job.status}`
+      });
+    }
+
+    job.status = "closed";
+    await job.save();
+
+    return res.status(200).json({ message: "Job closed", job });
+  } catch (error) {
+    console.error("Close job error:", error);
+    return res.status(500).json({ message: "Failed to close job" });
+  }
+};
+
+module.exports = { createJob, getJobs, getMyJobs, closeJob };

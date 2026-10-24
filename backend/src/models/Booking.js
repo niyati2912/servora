@@ -66,6 +66,13 @@ const bookingSchema = new mongoose.Schema(
       trim: true
     },
 
+    // Optional customer note ("Anything we should know?")
+    note: {
+      type: String,
+      trim: true,
+      maxlength: 1000
+    },
+
     trip: {
       pickup: { type: String, trim: true },
       destination: { type: String, trim: true },

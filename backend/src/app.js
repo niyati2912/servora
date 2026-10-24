@@ -41,20 +41,6 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
 app.use("/api/services", serviceRoutes);
 
-app.get("/api/auth/me", protect, (req, res) => {
-  res.json({
-    user: {
-      id: req.user._id,
-      name: req.user.name,
-      email: req.user.email,
-      phone: req.user.phone || "",
-      address: req.user.address || "",
-      city: req.user.city || "",
-      roles: req.user.roles
-    }
-  });
-});
-
 app.get(
   "/api/admin/test",
   protect,
@@ -63,5 +49,33 @@ app.get(
     res.json({ message: "Admin access granted" });
   }
 );
+
+// Unknown /api routes get JSON, not Express's HTML 404 page.
+app.use("/api", (req, res) => {
+  res.status(404).json({ message: "API route not found" });
+});
+
+// JSON error handler (must have 4 arguments so Express treats it as one).
+// eslint-disable-next-line no-unused-vars
+app.use((error, req, res, next) => {
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  // Malformed JSON body -> 400 instead of a 500 with a stack trace.
+  if (
+    error.type === "entity.parse.failed" ||
+    (error instanceof SyntaxError && error.status === 400 && "body" in error)
+  ) {
+    return res.status(400).json({ message: "Request body is not valid JSON" });
+  }
+
+  if (error.type === "entity.too.large") {
+    return res.status(413).json({ message: "Request body is too large" });
+  }
+
+  console.error("Unhandled error:", error);
+  return res.status(500).json({ message: "Internal server error" });
+});
 
 module.exports = app;

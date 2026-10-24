@@ -17,7 +17,7 @@ router.use(protect);
 
 router.post(
   "/",
-  authorizeRoles("customer", "employer"),
+  authorizeRoles("customer", "employer", "provider", "driver"),
   createBooking
 );
 

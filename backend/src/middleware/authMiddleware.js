@@ -4,15 +4,21 @@ const User = require("../models/User");
 
 const protect = async (req, res, next) => {
   try {
+    let token = null;
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
+    } else if (req.headers.cookie) {
+      const match = req.headers.cookie.match(/(?:^|;\s*)(?:token|sevora_token)=([^;]+)/);
+      if (match) token = match[1];
+    }
+
+    if (!token) {
       return res.status(401).json({
         message: "authentication is reqd"
       });
     }
-
-    const token = authHeader.split(" ")[1];
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 

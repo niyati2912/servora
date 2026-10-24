@@ -75,16 +75,14 @@ export default function AuthModal({ open, onClose, onLogin, defaultCity = 'Rajpu
         throw new Error(data.message || data.error || `Request failed (${response.status})`);
       }
 
-      if (mode === 'signup') {
-        setMode('login');
-        setPassword('');
-        setMessage('Account created successfully. Please log in.');
-      } else {
-        if (!data.token || !data.user) {
-          throw new Error('Login response is missing user or token. Check your backend response.');
-        }
-        onLogin(data);
+      if (!data.token || !data.user) {
+        throw new Error(mode === 'signup'
+          ? 'Registration succeeded but the API did not return a login token.'
+          : 'Login response is missing user or token. Check your backend response.');
       }
+      // Registration returns a token too, so take the user straight into
+      // the dashboard for the role they selected during signup.
+      onLogin(data);
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.');
     } finally {

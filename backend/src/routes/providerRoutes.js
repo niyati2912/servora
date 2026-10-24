@@ -1,11 +1,11 @@
-
 const express = require("express");
 
 const {
   createOrUpdateProfile,
   getProfiles,
   getMyProfile,
-  uploadMyDriverLicense
+  uploadMyDriverLicense,
+  getMyDriverLicenseFile
 } = require("../controllers/providerController");
 
 const { protect } = require("../middleware/authMiddleware");
@@ -19,6 +19,8 @@ router.get("/", getProfiles);
 
 router.post("/me", protect, createOrUpdateProfile);
 router.get("/me", protect, getMyProfile);
+
+router.get("/me/driver-license", protect, getMyDriverLicenseFile);
 
 router.post(
   "/me/driver-license",

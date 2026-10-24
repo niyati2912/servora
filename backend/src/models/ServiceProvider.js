@@ -1,4 +1,3 @@
-
 const mongoose = require("mongoose");
 
 const driverLicenseSchema = new mongoose.Schema(
@@ -8,9 +7,10 @@ const driverLicenseSchema = new mongoose.Schema(
     mimeType: { type: String },
     size: { type: Number },
     uploadedAt: { type: Date },
+    // The licence is only stored, never reviewed or verified.
     status: {
       type: String,
-      enum: ["not_submitted", "pending", "verified", "rejected"],
+      enum: ["not_submitted", "uploaded"],
       default: "not_submitted"
     }
   },

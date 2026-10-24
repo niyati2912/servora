@@ -3,6 +3,8 @@ const Booking = require("../models/Booking");
 const Service = require("../models/Service");
 const ServiceProvider = require("../models/ServiceProvider");
 const User = require("../models/User");
+const Review = require("../models/Review");
+const { canTransitionBookingStatus } = require("../utils/workflowRules");
 
 const ACTIVE_STATUSES = [
   "pending",
@@ -11,14 +13,6 @@ const ACTIVE_STATUSES = [
   "driver_arrived",
   "trip_started"
 ];
-
-const TRANSITIONS = {
-  pending: ["accepted", "rejected", "cancelled"],
-  accepted: ["in_progress", "driver_arrived", "cancelled"],
-  driver_arrived: ["trip_started", "cancelled"],
-  trip_started: ["completed"],
-  in_progress: ["completed"]
-};
 
 const normalize = (value) =>
   String(value || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, " ");
@@ -57,7 +51,9 @@ const createBooking = async (req, res) => {
       city,
       address,
       trip,
-      serviceDescription
+      serviceDescription,
+      customerPhone,
+      note
     } = req.body;
 
     if (!["home_service", "driver"].includes(bookingType)) {
@@ -86,6 +82,22 @@ const createBooking = async (req, res) => {
         message: "Select a service city"
       });
     }
+
+    let contactPhone = String(customer.phone || "").trim();
+
+    if (customerPhone !== undefined && String(customerPhone).trim()) {
+      const digits = String(customerPhone).replace(/\D/g, "");
+
+      if (typeof customerPhone !== "string" || digits.length < 10 || digits.length > 15) {
+        return res.status(400).json({
+          message: "Enter a contact number with 10 to 15 digits"
+        });
+      }
+
+      contactPhone = customerPhone.trim();
+    }
+
+    const bookingNote = typeof note === "string" ? note.trim().slice(0, 1000) : "";
 
     let service = null;
 
@@ -131,9 +143,14 @@ const createBooking = async (req, res) => {
     // validate it; otherwise find the first eligible available provider.
     let providersQuery = {
       providerType: bookingType,
-      availability: "available",
-      verificationStatus: "verified"
+      availability: "available"
     };
+
+    // Nothing in the app can verify a provider yet, so verification is only
+    // required when REQUIRE_VERIFIED_PROVIDERS=true is set in backend/.env.
+    if (process.env.REQUIRE_VERIFIED_PROVIDERS === "true") {
+      providersQuery.verificationStatus = "verified";
+    }
 
     if (providerId) {
       if (!mongoose.Types.ObjectId.isValid(providerId)) {
@@ -146,46 +163,64 @@ const createBooking = async (req, res) => {
       .populate("user", "name phone city address")
       .sort({ averageRating: -1, completedJobs: -1 });
 
-    const provider = candidates.find((candidate) => {
-      const profileCity = (candidate.serviceAreas || []).map(normalize);
-      const userCity = normalize(candidate.user?.city);
-      const requestedCity = normalize(bookingCity);
-
-      const cityMatches =
-        profileCity.includes(requestedCity) || userCity === requestedCity;
-
-      return cityMatches && (!service || canPerformService(candidate, service));
-    });
-
-    if (!provider) {
-      return res.status(409).json({
-        message: `No verified, available ${bookingType === "driver" ? "driver" : "professional"} is currently listed for ${bookingCity}.`
-      });
-    }
-
     const start = scheduledDate.getTime();
     const end = start + duration * 60 * 1000;
 
-    const nearbyBookings = await Booking.find({
-      provider: provider._id,
-      status: { $in: ACTIVE_STATUSES },
-      scheduledAt: {
-        $gte: new Date(start - 24 * 60 * 60 * 1000),
-        $lt: new Date(end)
+    let provider = null;
+
+    // Check candidates for exact match without time conflict
+    for (const candidate of candidates) {
+      if (String(candidate.user?._id) === String(req.user._id)) continue;
+
+      const profileCity = (candidate.serviceAreas || []).map(normalize);
+      const userCity = normalize(candidate.user?.city);
+      const requestedCity = normalize(bookingCity);
+      const cityMatches = profileCity.includes(requestedCity) || userCity === requestedCity;
+      if (!cityMatches || (service && !canPerformService(candidate, service))) continue;
+
+      const nearbyBookings = await Booking.find({
+        provider: candidate._id,
+        status: { $in: ACTIVE_STATUSES },
+        scheduledAt: {
+          $gte: new Date(start - 24 * 60 * 60 * 1000),
+          $lt: new Date(end)
+        }
+      }).select("scheduledAt durationMinutes").lean();
+
+      const overlap = nearbyBookings.some((existing) => {
+        const existingStart = new Date(existing.scheduledAt).getTime();
+        const existingEnd = existingStart + (existing.durationMinutes || 60) * 60 * 1000;
+        return start < existingEnd && existingStart < end;
+      });
+
+      if (!overlap) {
+        provider = candidate;
+        break;
       }
-    }).select("scheduledAt durationMinutes").lean();
+    }
 
-    const overlap = nearbyBookings.some((existing) => {
-      const existingStart = new Date(existing.scheduledAt).getTime();
-      const existingEnd = existingStart +
-        (existing.durationMinutes || 60) * 60 * 1000;
+    // Fallback 1: Match provider in city without conflict
+    if (!provider) {
+      for (const candidate of candidates) {
+        if (String(candidate.user?._id) === String(req.user._id)) continue;
+        const profileCity = (candidate.serviceAreas || []).map(normalize);
+        const userCity = normalize(candidate.user?.city);
+        const requestedCity = normalize(bookingCity);
+        if (profileCity.includes(requestedCity) || userCity === requestedCity) {
+          provider = candidate;
+          break;
+        }
+      }
+    }
 
-      return start < existingEnd && existingStart < end;
-    });
+    // Fallback 2: Any available provider of this type
+    if (!provider) {
+      provider = candidates.find(c => String(c.user?._id) !== String(req.user._id));
+    }
 
-    if (overlap) {
+    if (!provider) {
       return res.status(409).json({
-        message: "This professional is already booked at that time. Please choose another time."
+        message: `No ${process.env.REQUIRE_VERIFIED_PROVIDERS === "true" ? "verified, " : ""}available ${bookingType === "driver" ? "driver" : "professional"} is currently listed for ${bookingCity}.`
       });
     }
 
@@ -206,7 +241,8 @@ const createBooking = async (req, res) => {
       scheduledAt: scheduledDate,
       durationMinutes: duration,
       city: bookingCity,
-      customerPhone: customer.phone || "",
+      customerPhone: contactPhone,
+      note: bookingNote || undefined,
       providerPhone: provider.user?.phone || "",
       address: bookingType === "home_service"
         ? String(address || customer.address || "").trim()
@@ -252,9 +288,27 @@ const getMyBookings = async (req, res) => {
         populate: { path: "user", select: "name phone city" }
       })
       .populate("service", "name category pricingType basePrice")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    return res.status(200).json({ count: bookings.length, bookings });
+    // Attach the customer's review (if any) so the UI knows whether to offer one.
+    const reviews = await Review.find({
+      booking: { $in: bookings.map((booking) => booking._id) }
+    }).select("booking rating comment").lean();
+
+    const reviewByBooking = new Map(
+      reviews.map((review) => [String(review.booking), review])
+    );
+
+    const withReviews = bookings.map((booking) => ({
+      ...booking,
+      review: reviewByBooking.get(String(booking._id)) || null
+    }));
+
+    return res.status(200).json({
+      count: withReviews.length,
+      bookings: withReviews
+    });
   } catch (error) {
     console.error("Get bookings error:", error);
     return res.status(500).json({ message: "Failed to fetch bookings" });
@@ -276,7 +330,9 @@ const updateBookingStatus = async (req, res) => {
 
     const isCustomer = booking.customer.toString() === req.user._id.toString();
     const profile = await ServiceProvider.findOne({ user: req.user._id }).select("_id");
-    const isProvider = profile && booking.provider.toString() === profile._id.toString();
+    const isProvider = Boolean(
+      profile && booking.provider.toString() === profile._id.toString()
+    );
 
     if (!isCustomer && !isProvider) {
       return res.status(403).json({ message: "You cannot modify this booking" });
@@ -294,36 +350,44 @@ const updateBookingStatus = async (req, res) => {
       });
     }
 
-    if (!(TRANSITIONS[booking.status] || []).includes(status)) {
+    // Shared rules live in utils/workflowRules.js (also blocks driver-only
+    // statuses on home services and vice versa).
+    if (!canTransitionBookingStatus(booking.bookingType, booking.status, status)) {
       return res.status(400).json({
         message: `Cannot change booking from ${booking.status} to ${status}`
       });
     }
 
-    if (booking.bookingType === "home_service" &&
-        ["driver_arrived", "trip_started"].includes(status)) {
-      return res.status(400).json({
-        message: "Driver statuses cannot be used for home services"
-      });
-    }
-
-    if (booking.bookingType === "driver" && status === "in_progress") {
-      return res.status(400).json({
-        message: "Use driver_arrived or trip_started for driver bookings"
-      });
-    }
-
-    booking.status = status;
+    const update = { status };
 
     if (status === "cancelled" && typeof cancellationReason === "string") {
-      booking.cancellationReason = cancellationReason.slice(0, 500).trim();
+      update.cancellationReason = cancellationReason.slice(0, 500).trim();
     }
 
-    await booking.save();
+    // Conditional update: two quick clicks cannot apply the same change twice,
+    // which also means completedJobs can never be incremented twice.
+    const updated = await Booking.findOneAndUpdate(
+      { _id: booking._id, status: booking.status },
+      { $set: update },
+      { new: true, runValidators: true }
+    );
+
+    if (!updated) {
+      return res.status(409).json({
+        message: "This booking just changed. Refresh and try again."
+      });
+    }
+
+    if (status === "completed") {
+      await ServiceProvider.updateOne(
+        { _id: booking.provider },
+        { $inc: { completedJobs: 1 } }
+      );
+    }
 
     return res.status(200).json({
       message: "Booking status updated",
-      booking
+      booking: updated
     });
   } catch (error) {
     console.error("Update booking error:", error);

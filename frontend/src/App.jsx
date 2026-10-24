@@ -10,7 +10,9 @@ import {
 } from 'lucide-react';
 import { cities, fallbackServices, faqItems, servicePhotos } from './data';
 import CityIllustration from "./CityIllustration";
-import DriverOnboarding from "./DriverOnboarding";
+import RoleDashboard from "./RoleDashboard";
+import ReviewsCarousel from "./ReviewsCarousel";
+import ProfilePage from "./ProfilePage";
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
@@ -56,7 +58,7 @@ function SectionHeading({ eyebrow, title, accent, subtitle, align = 'center' }) 
   );
 }
 
-function Header({ onLocationClick, selectedCity, onAuthClick, currentUser, onLogout, onBookingsClick }) {
+function Header({ onLocationClick, selectedCity, onAuthClick, currentUser, onLogout, onBookingsClick, onDashboardClick, onProfileClick }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const items = [
     ['Services', '#services'], ['Service areas', '#cities'], ['How it works', '#how-it-works'], ['Find work', '#work']
@@ -74,7 +76,26 @@ function Header({ onLocationClick, selectedCity, onAuthClick, currentUser, onLog
           </button>
           <button className="button button-pink button-small header-cta" onClick={() => scrollTo('services')}>Explore services <ArrowUpRight size={16} /></button>
           {currentUser && (
-            <button className="button button-small button-outline auth-header-button" onClick={onBookingsClick}>My bookings</button>
+            <>
+              <button
+                className="button button-small button-outline auth-header-button"
+                onClick={onBookingsClick}
+              >
+                My bookings
+              </button>
+              <button
+                className="button button-small button-outline auth-header-button"
+                onClick={onDashboardClick}
+              >
+                Dashboard
+              </button>
+              <button
+                className="button button-small button-outline auth-header-button"
+                onClick={onProfileClick}
+              >
+                My Profile
+              </button>
+            </>
           )}
           {currentUser ? (
             <button className="button button-small button-outline auth-header-button" onClick={onLogout}>Logout</button>
@@ -89,6 +110,13 @@ function Header({ onLocationClick, selectedCity, onAuthClick, currentUser, onLog
       <AnimatePresence>
         {mobileOpen && <motion.div initial={{ opacity: 0, y: -7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -7 }} className="mobile-nav shell">
           {items.map(([label, href]) => <a key={label} href={href} onClick={() => setMobileOpen(false)}>{label}<ChevronRight size={16} /></a>)}
+          {currentUser && (
+            <>
+              <button className="button button-outline w-full" onClick={() => { setMobileOpen(false); onBookingsClick(); }}>My bookings</button>
+              <button className="button button-outline w-full" onClick={() => { setMobileOpen(false); onDashboardClick(); }}>Dashboard</button>
+              <button className="button button-outline w-full" onClick={() => { setMobileOpen(false); onProfileClick(); }}>My Profile</button>
+            </>
+          )}
           {!currentUser ? (
             <button className="button button-outline w-full" onClick={() => { setMobileOpen(false); onAuthClick(); }}>Login / Sign up</button>
           ) : (
@@ -557,6 +585,7 @@ function Toast({ toast, onClose }) {
 }
 
 function App() {
+  const [view, setView] = useState('home'); // 'home' | 'dashboard' | 'profile'
   const [selectedCity, setSelectedCity] = useState(() => localStorage.getItem('sevoraCity') || 'Rajpura');
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [bookingsOpen, setBookingsOpen] = useState(false);
@@ -610,6 +639,14 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const savedToken = localStorage.getItem('sevoraToken');
+    if (savedToken && !document.cookie.includes('token=')) {
+      document.cookie = `token=${savedToken}; path=/; max-age=86400; SameSite=Lax`;
+      document.cookie = `sevora_token=${savedToken}; path=/; max-age=86400; SameSite=Lax`;
+    }
+  }, []);
+
+  useEffect(() => {
     if (!toast) return undefined;
     const timer = window.setTimeout(() => setToast(''), 3600);
     return () => window.clearTimeout(timer);
@@ -659,6 +696,8 @@ function App() {
     }
     localStorage.setItem('sevoraToken', token);
     localStorage.setItem('sevoraUser', JSON.stringify(user));
+    document.cookie = `token=${token}; path=/; max-age=86400; SameSite=Lax`;
+    document.cookie = `sevora_token=${token}; path=/; max-age=86400; SameSite=Lax`;
     setCurrentUser(user);
     if (user.city) {
       setSelectedCity(user.city);
@@ -671,7 +710,10 @@ function App() {
   const handleLogout = () => {
     localStorage.removeItem('sevoraToken');
     localStorage.removeItem('sevoraUser');
+    document.cookie = 'token=; path=/; max-age=0;';
+    document.cookie = 'sevora_token=; path=/; max-age=0;';
     setCurrentUser(null);
+    setView('home');
     setToast('You have logged out successfully.');
   };
   
@@ -687,22 +729,30 @@ function App() {
     return House;
   };
 
-  if (currentUser?.roles?.includes("driver")) {
-  return (
-    <DriverOnboarding
-      user={currentUser}
-      onLogout={handleLogout}
-    />
-  );
-}
-if (currentUser?.roles?.includes("driver")) {
-  return (
-    <DriverOnboarding
-      user={currentUser}
-      onLogout={handleLogout}
-    />
-  );
-}
+  
+
+  if (view === 'dashboard' && currentUser) {
+    return (
+      <RoleDashboard
+        user={currentUser}
+        onLogout={handleLogout}
+        onBackHome={() => setView('home')}
+        onUserUpdated={(updated) => setCurrentUser(updated)}
+      />
+    );
+  }
+
+  if (view === 'profile' && currentUser) {
+    return (
+      <ProfilePage
+        user={currentUser}
+        onBackHome={() => setView('home')}
+        onOpenDashboard={() => setView('dashboard')}
+        onUserUpdated={(updated) => setCurrentUser(updated)}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
   return (
     <div className="app-shell" id="home">
@@ -713,6 +763,8 @@ if (currentUser?.roles?.includes("driver")) {
         currentUser={currentUser}
         onLogout={handleLogout}
         onBookingsClick={() => setBookingsOpen(true)}
+        onDashboardClick={() => setView('dashboard')}
+        onProfileClick={() => setView('profile')}
       />
 
       <main>
@@ -781,6 +833,8 @@ if (currentUser?.roles?.includes("driver")) {
             <div className="steps-grid"><div className="step-card"><div className="step-illustration step-one"><span className="step-number">01</span><div className="step-icon-bubble"><Search size={31} /></div><span className="step-spark step-spark-a">✦</span><span className="step-spark step-spark-b">✳</span></div><div className="step-text"><span>FIRST THINGS FIRST</span><h3>Find your kind of help</h3><p>Browse services and choose the task that fits your day.</p></div></div><div className="step-connector"><ArrowRight size={21} /></div><div className="step-card"><div className="step-illustration step-two"><span className="step-number">02</span><div className="step-icon-bubble"><CalendarDays size={31} /></div><span className="step-spark step-spark-a">✦</span><span className="step-spark step-spark-b">✳</span></div><div className="step-text"><span>MAKE IT YOURS</span><h3>Plan around your life</h3><p>Choose your area and work out the details that matter.</p></div></div><div className="step-connector"><ArrowRight size={21} /></div><div className="step-card"><div className="step-illustration step-three"><span className="step-number">03</span><div className="step-icon-bubble"><HeartHandshake size={31} /></div><span className="step-spark step-spark-a">✦</span><span className="step-spark step-spark-b">✳</span></div><div className="step-text"><span>ONE LESS THING</span><h3>Get back to your day</h3><p>The goal is simple: a little less to manage, a little more breathing room.</p></div></div></div>
           </div>
         </section>
+
+        <ReviewsCarousel />
 
         <section className="work-cta-section" id="work"><div className="shell work-cta-card"><div className="work-cta-ornament ornament-a">✳</div><div className="work-cta-ornament ornament-b">✦</div><div className="work-cta-copy"><span className="work-cta-label"><BriefcaseBusiness size={15} /> FOR LOCAL PROFESSIONALS</span><h2>Good work should<br /><span>find good people.</span></h2><p>Offer a service, build your profile, or explore job opportunities. Sevora is being built to bring local work closer to home, too.</p><div className="work-cta-actions"><button className="button button-white" onClick={() => setWorkOpen(true)}>Explore opportunities <ArrowUpRight size={17} /></button><span><UsersRound size={16} /> A marketplace for both sides</span></div></div><div className="work-cta-graphic"><div className="graphic-ring ring-one" /><div className="graphic-ring ring-two" /><div className="graphic-center"><HeartHandshake size={54} /></div><div className="graphic-pill graphic-pill-one"><span>✳</span> Skills that matter</div><div className="graphic-pill graphic-pill-two"><span>↗</span> Local opportunity</div><div className="graphic-pill graphic-pill-three"><span>♡</span> People first</div></div></div></section>
 

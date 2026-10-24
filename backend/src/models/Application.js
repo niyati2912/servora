@@ -22,6 +22,13 @@ const applicationSchema = new mongoose.Schema(
       type: String,
       trim: true
     },
+    // City the applicant is applying from (chosen in the apply form)
+    city: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      index: true
+    },
     status: {
       type: String,
       enum: [
